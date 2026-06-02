@@ -131,6 +131,18 @@ def probe_email(sender: str, app_password: str, recipient: str) -> Tuple[bool, s
         return False, f"寄送失敗：{str(e)[:160]}"
 
 
+def gh_login(runner=None) -> str:
+    """回傳目前 gh 登入的 GitHub 帳號（login）；未登入/失敗回空字串。"""
+    import subprocess
+    run = runner or subprocess.run
+    try:
+        r = run(["gh", "api", "user", "--jq", ".login"],
+                capture_output=True, text=True, timeout=15)
+        return (r.stdout or "").strip() if r.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def probe_gh(runner=None) -> Tuple[bool, str]:
     """gh 是否已登入。"""
     import subprocess

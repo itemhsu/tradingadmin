@@ -34,6 +34,7 @@ def no_net(monkeypatch):
     monkeypatch.setattr(lr, "cron_runs", lambda *a, **k: [])
     import admin_gui.services.probes as pr
     monkeypatch.setattr(pr, "probe_gh", lambda *a, **k: (True, "gh 已登入"))
+    monkeypatch.setattr(pr, "gh_login", lambda *a, **k: "itemhsu")
 
 
 SLUG = "itemhsu/tech-rebalance"
@@ -53,6 +54,23 @@ def test_overview_global_settings_builds(qapp, no_net):
     assert "SENDGRID_API_KEY" not in v.sec_labels
     assert "EMAIL_SENDER" not in v.sec_labels
     assert "DASHBOARD_PUSH_TOKEN" not in v.sec_labels
+
+
+def test_overview_login_and_dashboard(qapp, no_net):
+    """O-1/O-2/O-3：不顯示 repo slug、顯示登入名、回測分析連結。"""
+    from admin_gui.views.overview_view import OverviewView, dashboard_backtest_url
+    v = OverviewView(SLUG)
+    v.refresh()
+    # G-70：登入名
+    assert "itemhsu" in v.user_lbl.text()
+    # G-71：Dashboard 回測分析連結依登入名推導
+    assert dashboard_backtest_url("itemhsu") == \
+        "https://itemhsu.github.io/tech-rebalance-dashboard/momentum/"
+    assert "itemhsu.github.io" in v.dash_lbl.text()
+    # G-69：不顯示 repo slug
+    from PySide6.QtWidgets import QLabel
+    blob = " ".join(lbl.text() for lbl in v.findChildren(QLabel))
+    assert "itemhsu/tech-rebalance" not in blob
 
 
 def test_accounts_view_builds_and_lists(qapp, no_net):

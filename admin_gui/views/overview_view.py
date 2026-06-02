@@ -25,6 +25,11 @@ from admin_gui.services import probes
 _GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
+def dashboard_backtest_url(login: str) -> str:
+    """O-3：依 GitHub 登入名推導 Dashboard 回測分析網頁 URL。"""
+    return f"https://{login}.github.io/tech-rebalance-dashboard/momentum/"
+
+
 class _SetSecretDialog(QDialog):
     def __init__(self, name, parent=None):
         super().__init__(parent); self.setWindowTitle(f"設定 {name}")
@@ -103,7 +108,11 @@ class OverviewView(QWidget):
         gb2 = QGroupBox("🔧 環境 / 登入")
         fe = _form(gb2)
         self.gh_lbl = QLabel("…"); fe.addRow("gh（GitHub CLI）", self.gh_lbl)
-        fe.addRow("GitHub repo", QLabel(self.repo_slug))
+        # O-2：顯示 GitHub 登入名（不顯示 repo slug）
+        self.user_lbl = QLabel("…"); fe.addRow("GitHub 登入", self.user_lbl)
+        # O-3：Dashboard 回測分析網頁連結（依登入名推導）
+        self.dash_lbl = QLabel("…"); self.dash_lbl.setOpenExternalLinks(True)
+        fe.addRow("回測分析", self.dash_lbl)
         mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
         fe.addRow("存取方式", mode)
         # 重新開設定精靈（換 repo / 重新 gh 登入）——首次設定完成後仍可進入
@@ -137,6 +146,16 @@ class OverviewView(QWidget):
             lbl.setText("✅ 已設" if k in existing else "❌ 未設")
         ok2, msg2 = probes.probe_gh()
         self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
+
+        # O-2/O-3：登入名 + Dashboard 回測分析連結
+        login = probes.gh_login()
+        if login:
+            self.user_lbl.setText(login)
+            url = dashboard_backtest_url(login)
+            self.dash_lbl.setText(f'<a href="{url}">📈 開啟回測分析 Dashboard</a>')
+        else:
+            self.user_lbl.setText("（未登入）")
+            self.dash_lbl.setText("（登入後顯示）")
 
     def _set(self, name):
         dlg = _SetSecretDialog(name, self)
