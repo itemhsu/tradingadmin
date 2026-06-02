@@ -30,10 +30,16 @@
   },
 
   "endpoints": {
+    "profile":     "/user/profile",
     "balances":    "/accounts/{account_id}/balances",
     "positions":   "/accounts/{account_id}/positions",
     "orders":      "/accounts/{account_id}/orders",
     "order_by_id": "/accounts/{account_id}/orders/{order_id}"
+  },
+
+  "account_discovery": {
+    "endpoint":         "/user/profile",
+    "account_id_path":  "profile.account.account_number"
   },
 
   "request": {

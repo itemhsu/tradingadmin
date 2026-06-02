@@ -56,10 +56,23 @@ def test_overview_global_settings_builds(qapp, no_net):
 
 
 def test_accounts_view_builds_and_lists(qapp, no_net):
-    from admin_gui.views.accounts_view import AccountsView
+    from admin_gui.views.accounts_view import AccountsView, _HEADERS
     v = AccountsView(SLUG, store=_local_store())
     assert v.table.rowCount() >= 4
-    assert v.table.columnCount() == 8   # id/名稱/啟用/券商/環境/策略/NAV/日期
+    # G-64：移除 id 欄 → 7 欄，標頭不含 id
+    assert v.table.columnCount() == 7
+    assert "id" not in _HEADERS
+
+
+def test_account_dialog_fields_by_broker(qapp, no_net):
+    """G-65/G-68：金鑰欄位依券商動態 —— Alpaca 2 欄、Tradier 1 欄（Token）。"""
+    from admin_gui.views.accounts_view import AccountsView, AccountDialog
+    v = AccountsView(SLUG, store=_local_store())
+    dlg = AccountDialog(v.catalog, v.gh, v.repo, None)
+    dlg.broker_cmb.setCurrentText("alpaca")
+    assert set(dlg.cred_edits.keys()) == {"API_KEY", "API_SECRET"}
+    dlg.broker_cmb.setCurrentText("tradier")
+    assert set(dlg.cred_edits.keys()) == {"API_KEY"}   # 只一個 token，account_id 自動
 
 
 def test_schedule_view_builds(qapp):
@@ -78,11 +91,22 @@ def test_mainwindow_is_four_tabs(qapp, no_net):
 
 def test_wizard_builds(qapp, monkeypatch, tmp_path):
     import admin_gui.views.wizard as wz
-    monkeypatch.setattr(wz, "probe_gh", lambda *a, **k: (True, "gh 已登入"))
+    # 阻斷網路：probe_gh 未登入 → 不觸發 _detect_user 的 gh 呼叫
+    monkeypatch.setattr(wz, "probe_gh", lambda *a, **k: (False, "gh 未登入"))
     from admin_gui.services.global_config import GlobalConfig
-    w = wz.SetupWizard(GlobalConfig(tmp_path / "config.json"))
-    assert "登入" in w.gh_lbl.text()
-    # Fork 範本協助：範本欄與狀態標籤存在，且 _do_fork 可被呼叫（gh 未真的執行）
-    assert w.template_edit.text()           # 預設帶範本 slug
-    assert hasattr(w, "fork_lbl")
-    assert callable(w._do_fork)
+    cfg = GlobalConfig(tmp_path / "config.json")
+    cfg.set("repo_slug", "itemhsu/tech-rebalance")
+    w = wz.SetupWizard(cfg)
+    # G-53：只輸入帳號 → 內部組 {帳號}/tech-rebalance
+    assert w.user_edit.text() == "itemhsu"        # 由 repo_slug 帶出帳號
+    assert w._managed_slug() == "itemhsu/tech-rebalance"
+    # 五步動作可呼叫
+    for fn in ("_do_fork", "_do_pages", "_do_actions"):
+        assert callable(getattr(w, fn))
+    # G-52/G-55：精靈不含 Email/帳戶字樣、不顯示完整範本 slug
+    texts = []
+    for lbl in w.findChildren(type(w.gh_lbl)):
+        texts.append(lbl.text())
+    blob = " ".join(texts)
+    assert "EMAIL" not in blob.upper() and "密碼" not in blob and "帳戶" not in blob
+    assert "itemhsu/tech-rebalance" not in blob   # 不揭露範本

@@ -144,15 +144,21 @@ footer{text-align:center;color:#1e293b;font-size:11px;padding:36px 0 18px;}
 <div class="box ok">
   <strong>🖥️ 最簡單的方式：用桌面 App（推薦）</strong>
   下載 <b>TradingAdmin</b> 桌面程式，<b>不用碰命令列、不用手動設 Secrets、不用手編 accounts.json</b>。
-  它用 GitHub API 直接幫你管理帳戶、券商金鑰、cron 排程與日誌；你只要在 App 裡：
+  它用 GitHub API 直接幫你管理帳戶、券商金鑰、cron 排程與日誌。<b>App 每次啟動會顯示設定精靈</b>，
+  精靈幫你一鍵完成：
   <ol style="margin:8px 0 0 18px">
-    <li>登入 GitHub（<code>gh auth login</code>，App 會引導）</li>
-    <li>在「帳戶」分頁新增帳戶 → 填券商金鑰（App 直接幫你寫進 GitHub Secrets）</li>
-    <li>在「總覽」分頁設定 email App 密碼（<code>EMAIL_PASSWORD</code>）</li>
+    <li>① 登入 GitHub（<code>gh auth login</code>，App 會引導）</li>
+    <li>② 從範本 <b>Fork</b> 你自己的交易 repo（自動設為 <b>Private</b>）——你只需輸入 GitHub 帳號</li>
+    <li>⑥ 一鍵<b>啟用 GitHub Pages</b>、⑦ 一鍵<b>啟用 GitHub Actions</b>（已完成會顯示 ✅，可安全重按）</li>
   </ol>
+  其餘兩項在主視窗分頁設定（精靈不涉入）：
+  <ul style="margin:6px 0 0 18px">
+    <li>③④ <b>Email App 密碼</b>（<code>EMAIL_PASSWORD</code>）→「總覽」分頁</li>
+    <li>⑤ <b>交易帳戶與券商金鑰</b> →「帳戶」分頁（Alpaca 填 Key+Secret；Tradier 只填一個 Token，帳號自動取得）</li>
+  </ul>
   下載：<a href="https://github.com/itemhsu/tradingadmin/releases/latest" target="_blank">github.com/itemhsu/tradingadmin/releases/latest</a>
   （macOS DMG）。<br>
-  下面的「手動命令列」步驟僅供進階使用者或想了解底層的人參考——用 App 的話可略過步驟 ③④⑤。
+  下面的「手動命令列」步驟僅供進階使用者參考——用 App 的話可略過 ③④⑤⑥⑦。
 </div>
 
 <!-- ══════════════════════════════════════════════════ -->

@@ -52,17 +52,16 @@ def main(argv=None) -> int:
     app = QApplication(argv[:1])
 
     from admin_gui.services.global_config import GlobalConfig
-    from admin_gui.views.wizard import SetupWizard, is_first_run
+    from admin_gui.views.wizard import SetupWizard
     cfg = GlobalConfig()
 
     if len(argv) > 1:
         slug = argv[1]
-    elif is_first_run(cfg):
+    else:
+        # W-1：每次啟動都顯示精靈（保留「略過」）；略過則用既有設定
         wiz = SetupWizard(cfg)
         wiz.exec()
         slug = wiz.chosen_repo or cfg.get("repo_slug") or _DEFAULT_SLUG
-    else:
-        slug = cfg.get("repo_slug") or _DEFAULT_SLUG
 
     win = MainWindow(slug)
     win.show()

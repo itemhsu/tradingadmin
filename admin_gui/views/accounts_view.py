@@ -1,21 +1,20 @@
-"""admin_gui/views/accounts_view.py — 帳戶分頁（Phase A-2 重設計）。
+"""admin_gui/views/accounts_view.py — 帳戶分頁。
 
-極簡表單：使用者只填 帳戶名稱 / 券商 / 環境 / 策略 + API 金鑰。
-系統自動補 id/secret_prefix/data_dir/use_new_runner。
-「測試連線並儲存」：金鑰先試打券商 API，成功才寫 accounts.json + 設 GitHub Secrets + 記 log。
-選一列可看該帳戶交易 log。
+使用者只填 帳戶名稱 / 券商 / 環境 / 策略 + 金鑰；金鑰欄位<b>依券商動態</b>：
+  - Alpaca → API Key + API Secret
+  - Tradier → 只一個 API Token（account_id 由 GUI 自動取得）
+系統自動補 id/secret_prefix/data_dir。測試連線成功才寫 accounts.json + GitHub Secrets。
+表格不顯示內部 id。
 """
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QMessageBox, QDialog, QFormLayout, QLineEdit,
-    QComboBox, QCheckBox, QDialogButtonBox, QLabel, QRadioButton, QButtonGroup,
-    QPlainTextEdit,
+    QComboBox, QCheckBox, QDialogButtonBox, QLabel, QGroupBox, QPlainTextEdit,
 )
 
 from admin_gui.services.accounts_repo import AccountsRepo
@@ -23,13 +22,15 @@ from admin_gui.services.catalog import Catalog
 from admin_gui.services.state_reader import StateReader
 from admin_gui.services.account_factory import build_account
 from admin_gui.services.gh_client import GhClient, GhError
-from admin_gui.services import probes, log_reader
+from admin_gui.services import probes, log_reader, broker_creds
 
-_HEADERS = ["id", "帳戶名稱", "啟用", "券商", "環境", "策略", "最後 NAV", "日期"]
+# A-1：移除「id」欄（系統內部碼，使用者無須看見）
+_HEADERS = ["帳戶名稱", "啟用", "券商", "環境", "策略", "最後 NAV", "日期"]
+_ENV_COL = 3   # 「環境」欄索引（用於 live 標紅）
 
 
 class AccountDialog(QDialog):
-    """新增/編輯帳戶（極簡 + 內嵌金鑰 + 測試才存）。"""
+    """新增/編輯帳戶（金鑰欄位依券商動態 + 測試才存）。"""
 
     def __init__(self, catalog: Catalog, gh: GhClient, repo: AccountsRepo,
                  account: Optional[dict] = None, parent=None):
@@ -37,105 +38,140 @@ class AccountDialog(QDialog):
         self.catalog, self.gh, self.repo = catalog, gh, repo
         self.original = account
         self.setWindowTitle("編輯帳戶" if account else "新增帳戶")
-        form = QFormLayout(self)
-
         a = account or {}
+
+        outer = QVBoxLayout(self)
+        form = QFormLayout()
+        outer.addLayout(form)
+
         self.name_edit = QLineEdit(a.get("label", ""))
         self.name_edit.setPlaceholderText("例如：我的科技股（必填）")
         self.broker_cmb = QComboBox(); self.broker_cmb.addItems(catalog.list_brokers())
-        if a.get("broker"): self.broker_cmb.setCurrentText(a["broker"])
-        # 環境：radio（paper/live），live 變紅
-        self.env_paper = QRadioButton("模擬 paper")
-        self.env_live = QRadioButton("真錢 live")
-        self.env_group = QButtonGroup(self)
-        self.env_group.addButton(self.env_paper); self.env_group.addButton(self.env_live)
-        env_row = QWidget(); el = QHBoxLayout(env_row); el.setContentsMargins(0,0,0,0)
-        el.addWidget(self.env_paper); el.addWidget(self.env_live)
-        (self.env_live if a.get("environment") == "live" else self.env_paper).setChecked(True)
+        if a.get("broker"):
+            self.broker_cmb.setCurrentText(a["broker"])
+        self.env_cmb = QComboBox()
         self.env_warn = QLabel(""); self.env_warn.setStyleSheet("color:#fca5a5;font-size:11px;")
-        self.env_live.toggled.connect(self._env_changed); self._env_changed()
         self.strategy_cmb = QComboBox(); self.strategy_cmb.addItems(catalog.list_strategies())
-        if a.get("strategy"): self.strategy_cmb.setCurrentText(a["strategy"])
+        if a.get("strategy"):
+            self.strategy_cmb.setCurrentText(a["strategy"])
         self.enabled_chk = QCheckBox("啟用後每日自動交易（關閉＝暫停這個帳戶不下單）")
         self.enabled_chk.setChecked(bool(a.get("enabled", True)))
         self.email_edit = QLineEdit("; ".join(a.get("email_recipients", [])))
 
-        self.key_edit = QLineEdit(); self.key_edit.setEchoMode(QLineEdit.Password)
-        self.sec_edit = QLineEdit(); self.sec_edit.setEchoMode(QLineEdit.Password)
-        self.key_edit.setPlaceholderText("API Key（存進 GitHub，不留本機）")
-        self.sec_edit.setPlaceholderText("API Secret")
-
         form.addRow("帳戶名稱", self.name_edit)
         form.addRow("券商", self.broker_cmb)
-        form.addRow("環境", env_row)
+        form.addRow("環境", self.env_cmb)
         form.addRow("", self.env_warn)
         form.addRow("策略", self.strategy_cmb)
         form.addRow("", self.enabled_chk)
         form.addRow("email 收件人", self.email_edit)
-        form.addRow("API Key", self.key_edit)
-        form.addRow("API Secret", self.sec_edit)
+
+        # 金鑰區（依券商動態重繪）
+        self.cred_box = QGroupBox("API 金鑰")
+        self.cred_form = QFormLayout(self.cred_box)
+        self.cred_edits: Dict[str, QLineEdit] = {}
+        outer.addWidget(self.cred_box)
+
         self.status = QLabel(""); self.status.setWordWrap(True)
-        form.addRow(self.status)
+        outer.addWidget(self.status)
 
         btns = QDialogButtonBox(QDialogButtonBox.Cancel)
         self.save_btn = btns.addButton("測試連線並儲存", QDialogButtonBox.AcceptRole)
         self.save_btn.clicked.connect(self._test_and_save)
         btns.rejected.connect(self.reject)
-        form.addRow(btns)
+        outer.addWidget(btns)
+
+        # 券商/環境連動
+        self.broker_cmb.currentTextChanged.connect(self._on_broker_changed)
+        self.env_cmb.currentTextChanged.connect(self._env_changed)
+        self._on_broker_changed()   # 初次填入 env + 金鑰欄
+        if a.get("environment"):
+            self.env_cmb.setCurrentText(a["environment"])
+
+    # ── 券商連動：重建環境選項 + 金鑰欄位（A-2 / A-5）────────────────────
+    def _on_broker_changed(self):
+        broker = self.broker_cmb.currentText()
+        spec = self.catalog.broker_spec(broker)
+        # 環境（paper/live 或 sandbox/live）來自 schema，不自由輸入
+        envs = self.catalog.broker_environments(broker) or ["paper", "live"]
+        self.env_cmb.blockSignals(True)
+        self.env_cmb.clear(); self.env_cmb.addItems(envs)
+        self.env_cmb.blockSignals(False)
+        self._env_changed()
+        # 金鑰欄位：清掉舊的、依 schema 重建
+        while self.cred_form.rowCount():
+            self.cred_form.removeRow(0)
+        self.cred_edits.clear()
+        for key, label, masked in broker_creds.credential_inputs(spec):
+            edit = QLineEdit()
+            if masked:
+                edit.setEchoMode(QLineEdit.Password)
+            edit.setPlaceholderText(f"{label}（存進 GitHub，不留本機）")
+            self.cred_edits[key] = edit
+            self.cred_form.addRow(label, edit)
+        if broker_creds.needs_account_discovery(spec):
+            hint = QLabel("Account ID 由系統用 Token 自動取得，無需輸入")
+            hint.setStyleSheet("color:#94a3b8;font-size:11px;")
+            self.cred_form.addRow("", hint)
 
     def _env_changed(self):
-        if self.env_live.isChecked():
-            self.env_warn.setText("⚠ 真錢帳戶：每日 cron 會用真錢下單")
-        else:
-            self.env_warn.setText("")
-
-    def _env(self) -> str:
-        return "live" if self.env_live.isChecked() else "paper"
+        self.env_warn.setText(
+            "⚠ 真錢帳戶：每日 cron 會用真錢下單" if self.env_cmb.currentText() == "live" else "")
 
     def _test_and_save(self):
         name = self.name_edit.text().strip()
         if not name:
             self.status.setText("❌ 帳戶名稱必填"); return
         broker = self.broker_cmb.currentText()
-        env = self._env()
+        spec = self.catalog.broker_spec(broker)
+        env = self.env_cmb.currentText()
         strat = self.strategy_cmb.currentText()
-        key, sec = self.key_edit.text().strip(), self.sec_edit.text().strip()
+        values = {k: e.text().strip() for k, e in self.cred_edits.items()}
+        has_input = any(values.values())
 
-        # live 二次確認
         if env == "live":
             if QMessageBox.question(self, "真錢確認",
                 f"帳戶「{name}」將以【真錢 live】每日自動交易。確定？") != QMessageBox.Yes:
                 return
 
-        # 既有帳戶若沒重填金鑰，跳過試打（只改其他欄位）
-        if key and sec:
+        # 有填金鑰 → 測試連線（Tradier 先用 token 自動取 account_id）
+        if has_input:
             self.status.setText("⏳ 測試連線中…"); self.repaint()
-            spec = self.catalog.broker_spec(broker)
-            ok, msg = probes.probe_broker(spec, env, key, sec)
+            account_id = ""
+            if broker_creds.needs_account_discovery(spec) and values.get("API_KEY"):
+                ok, res = probes.fetch_account_id(spec, env, values["API_KEY"])
+                if not ok:
+                    self.status.setText(f"❌ {res}（未儲存）"); return
+                account_id = res
+                values["ACCOUNT_ID"] = res
+            ok, msg = probes.probe_broker(
+                spec, env, values.get("API_KEY", ""), values.get("API_SECRET", ""), account_id)
             if not ok:
                 self.status.setText(f"❌ {msg}（未儲存）"); return
-            self.status.setText(f"✅ {msg}")
+            extra = f"（帳號 {account_id}）" if account_id else ""
+            self.status.setText(f"✅ {msg}{extra}")
 
         try:
-            if self.original:   # 編輯
+            if self.original:
                 acc_id = self.original["id"]
+                prefix = self.original.get("secret_prefix") or f"ACC{acc_id}"
                 self.repo.update(acc_id, {
                     "label": name, "broker": broker, "environment": env,
                     "strategy": strat, "enabled": self.enabled_chk.isChecked(),
                     "email_recipients": [s.strip() for s in self.email_edit.text().split(";") if s.strip()],
                 })
-            else:               # 新增（系統指定 id 等）
+            else:
                 acc = build_account(name, broker, env, strat,
                                     existing_ids=self.repo.ids(),
                                     enabled=self.enabled_chk.isChecked(),
                                     email_recipients=[s.strip() for s in self.email_edit.text().split(";") if s.strip()])
                 self.repo.add(acc)
                 acc_id = acc["id"]
-            # 金鑰一併寫進 GitHub Secrets（免切分頁）
-            if key and sec:
-                prefix = f"ACC{acc_id}"
-                self.gh.set_secret(f"{prefix}_ALPACA_KEY", key)
-                self.gh.set_secret(f"{prefix}_ALPACA_SECRET", sec)
+                prefix = acc.get("secret_prefix") or f"ACC{acc_id}"
+            # 券商感知寫入 Secrets（A-4）
+            if has_input:
+                for sname, sval in broker_creds.secret_writes(broker, spec, prefix, values).items():
+                    self.gh.set_secret(sname, sval)
         except (ValueError, GhError) as e:
             self.status.setText(f"❌ {e}（未完成）"); return
         self.accept()
@@ -183,20 +219,25 @@ class AccountsView(QWidget):
         for r, a in enumerate(accounts):
             st = self.state.read(a)
             env = a.get("environment", "")
-            cells = [str(a.get("id", "")), a.get("label", ""),
+            cells = [a.get("label", ""),
                      "✅" if a.get("enabled", True) else "⛔", a.get("broker", ""),
                      ("🔴 LIVE" if env == "live" else env),
                      a.get("strategy", ""),
                      f"${st.nav:,.0f}" if st.nav else "待產生", st.date or "—"]
             for c, text in enumerate(cells):
                 it = QTableWidgetItem(text)
-                if c == 4 and env == "live":
+                if c == 0:
+                    it.setData(Qt.UserRole, str(a.get("id", "")))   # id 藏在第一欄資料
+                if c == _ENV_COL and env == "live":
                     it.setForeground(Qt.red)
                 self.table.setItem(r, c, it)
 
     def _selected_id(self) -> Optional[str]:
         row = self.table.currentRow()
-        return self.table.item(row, 0).text() if row >= 0 else None
+        if row < 0:
+            return None
+        it = self.table.item(row, 0)
+        return it.data(Qt.UserRole) if it else None
 
     def _show_log(self):
         acc_id = self._selected_id()
@@ -228,7 +269,7 @@ class AccountsView(QWidget):
             return
         acc = self.repo.get(acc_id) or {}
         if QMessageBox.question(self, "刪除確認",
-            f"刪除「{acc.get('label')}」(#{acc_id})？\n• 從 accounts.json 移除\n"
+            f"刪除「{acc.get('label')}」？\n• 從 accounts.json 移除\n"
             f"• 保留 {acc.get('data_dir')}/ 歷史") == QMessageBox.Yes:
             self.repo.delete(acc_id)
             self.refresh()

@@ -23,6 +23,44 @@ def _dig(obj, dotted: str):
     return cur
 
 
+def fetch_account_id(spec: dict, environment: str, api_key: str) -> Tuple[bool, str]:
+    """用 token 向券商 account_discovery 端點自動取回 account_id。
+
+    給 bearer_token 類券商（如 Tradier）：使用者只輸入 token，
+    GUI 打 profile 端點拿帳號。回 (True, account_id) 或 (False, 錯誤訊息)。
+    """
+    disc = (spec or {}).get("account_discovery") or {}
+    ep = disc.get("endpoint")
+    path = disc.get("account_id_path")
+    if not ep or not path:
+        return False, "此券商未定義自動取得帳號的方式"
+    base = ((spec.get("environments") or {}).get(environment) or {}).get("base_url")
+    if not base:
+        return False, f"schema 沒有 {environment} 環境的 base_url"
+    headers = {"Accept": "application/json"}
+    for k, tpl in ((spec.get("auth") or {}).get("header_template") or {}).items():
+        headers[k] = tpl.replace("{api_key}", api_key)
+    try:
+        req = urllib.request.Request(base.rstrip("/") + ep, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return False, f"取得帳號失敗：HTTP {e.code}" + (
+            "（token 無效）" if e.code in (401, 403) else "")
+    except Exception as e:  # noqa: BLE001
+        return False, f"取得帳號失敗：{str(e)[:140]}"
+
+    # account_id_path 最後一段可能對應 dict 或 list（多帳號）；取第一個
+    parent_path, _, leaf = path.rpartition(".")
+    node = _dig(data, parent_path) if parent_path else data
+    if isinstance(node, list):
+        node = node[0] if node else None
+    acc_id = node.get(leaf) if isinstance(node, dict) else None
+    if not acc_id:
+        return False, "回應中找不到帳號（account_id）"
+    return True, str(acc_id)
+
+
 def probe_broker(spec: dict, environment: str, api_key: str,
                  api_secret: str, account_id: str = "") -> Tuple[bool, str]:
     """依 broker schema 直接打券商 REST API 取餘額（不需 clone / broker 程式）。
