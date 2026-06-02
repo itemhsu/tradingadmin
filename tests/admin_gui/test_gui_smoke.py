@@ -82,3 +82,7 @@ def test_wizard_builds(qapp, monkeypatch, tmp_path):
     from admin_gui.services.global_config import GlobalConfig
     w = wz.SetupWizard(GlobalConfig(tmp_path / "config.json"))
     assert "登入" in w.gh_lbl.text()
+    # Fork 範本協助：範本欄與狀態標籤存在，且 _do_fork 可被呼叫（gh 未真的執行）
+    assert w.template_edit.text()           # 預設帶範本 slug
+    assert hasattr(w, "fork_lbl")
+    assert callable(w._do_fork)
