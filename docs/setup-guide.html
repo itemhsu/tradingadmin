@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tech-Rebalance 部署指南 — 從零到生產</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#020617;color:#e2e8f0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+     font-size:14px;line-height:1.65;}
+
+.sidebar{position:fixed;top:0;left:0;width:240px;height:100vh;background:#0a0f1e;
+   border-right:1px solid #1e293b;overflow-y:auto;padding:14px 0;z-index:50;}
+.sidebar h1{font-size:13px;color:#3b82f6;padding:0 16px 12px;border-bottom:1px solid #1e293b;font-weight:800;}
+.sidebar h1 small{display:block;font-size:10px;color:#475569;margin-top:2px;font-weight:400;}
+.sidebar h3{font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:1.4px;padding:14px 16px 4px;}
+.sidebar a{display:block;padding:5px 16px;font-size:12px;color:#64748b;border-left:3px solid transparent;
+   text-decoration:none;transition:all .12s;}
+.sidebar a:hover,.sidebar a.active{color:#3b82f6;border-color:#3b82f6;background:rgba(59,130,246,.07);}
+.sidebar .est{color:#475569;font-size:10px;padding:0 16px;margin-top:8px;}
+
+main{margin-left:240px;padding:32px 5% 80px;max-width:1100px;}
+
+.hero{background:linear-gradient(135deg,#0c1628 0%,#0d1f3c 60%,#0c1628 100%);
+   padding:32px 38px;border-radius:14px;margin-bottom:28px;border:1px solid #1e3a5f;}
+.hero .badge{display:inline-block;background:#1e293b;border:1px solid #334155;color:#94a3b8;
+   padding:3px 11px;border-radius:14px;font-size:10px;margin-right:6px;}
+.hero h1{font-size:30px;font-weight:900;color:#3b82f6;margin:12px 0 8px;letter-spacing:-0.5px;}
+.hero h1 span{color:#a855f7;}
+.hero p{color:#94a3b8;font-size:13px;}
+.hero .toc{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
+.hero .toc a{background:#0f172a;border:1px solid #1e3a5f;color:#94a3b8;
+   text-decoration:none;font-size:11px;padding:6px 12px;border-radius:6px;}
+.hero .toc a:hover{border-color:#3b82f6;color:#3b82f6;}
+
+section{background:#0a0f1e;border:1px solid #1e293b;border-radius:12px;
+   padding:26px 32px;margin-bottom:22px;}
+section h2{font-size:20px;font-weight:800;color:#e2e8f0;margin-bottom:6px;}
+section h2 .step{display:inline-block;background:#3b82f6;color:#fff;font-size:13px;
+   padding:3px 12px;border-radius:14px;font-weight:700;margin-right:10px;}
+section .meta{color:#475569;font-size:11px;margin-bottom:18px;}
+section h3{font-size:14px;font-weight:700;color:#93c5fd;margin:20px 0 8px;}
+section h4{font-size:11px;font-weight:700;color:#475569;margin:14px 0 6px;
+   text-transform:uppercase;letter-spacing:.8px;}
+p{color:#94a3b8;margin-bottom:9px;}
+ul,ol{color:#94a3b8;padding-left:22px;margin-bottom:10px;}
+li{margin-bottom:4px;}
+b,strong{color:#e2e8f0;}
+a{color:#3b82f6;}
+
+code{background:#0f172a;border:1px solid #1e293b;border-radius:3px;padding:1px 6px;
+   font-size:11.5px;color:#93c5fd;font-family:'Menlo','Courier New',monospace;}
+pre{background:#020617;border:1px solid #1e293b;border-radius:8px;padding:14px 18px;
+   overflow-x:auto;font-size:12px;line-height:1.6;margin:10px 0;
+   font-family:'Menlo','Courier New',monospace;color:#cbd5e1;}
+.k{color:#93c5fd;}.s{color:#86efac;}.n{color:#fb923c;}.c{color:#475569;font-style:italic;}
+
+.box{border-radius:8px;padding:12px 16px;margin:11px 0;border:1px solid;}
+.box.warn   {background:#190e00;border-color:#92400e;color:#fcd34d;}
+.box.danger {background:#190808;border-color:#7f1d1d;color:#fca5a5;}
+.box.info   {background:#080f1a;border-color:#1e3a5f;color:#93c5fd;}
+.box.ok     {background:#081308;border-color:#14532d;color:#86efac;}
+.box.tip    {background:#1c0d23;border-color:#581c87;color:#c4b5fd;}
+.box strong{color:inherit;}
+
+table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0;}
+th{background:#0f172a;color:#475569;padding:8px 11px;text-align:left;
+   border-bottom:1px solid #1e293b;font-size:10px;text-transform:uppercase;letter-spacing:.5px;}
+td{padding:7px 11px;border-bottom:1px solid #0d1526;color:#cbd5e1;vertical-align:top;}
+tr:hover td{background:#0c1220;}
+td code{font-size:10.5px;}
+
+.checklist{list-style:none;padding-left:0;}
+.checklist li{padding:5px 0 5px 26px;position:relative;color:#cbd5e1;}
+.checklist li::before{content:'☐';position:absolute;left:6px;color:#475569;font-size:14px;}
+
+.step-num{display:inline-block;width:24px;height:24px;background:#3b82f6;color:#fff;
+   border-radius:50%;text-align:center;font-weight:800;font-size:12px;line-height:24px;
+   margin-right:8px;}
+
+kbd{background:#1e293b;border:1px solid #334155;border-bottom-width:2px;border-radius:3px;
+   padding:2px 6px;font-size:10.5px;color:#cbd5e1;font-family:monospace;}
+
+.copy-btn{display:inline-block;background:#1e293b;border:1px solid #334155;color:#94a3b8;
+   font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;float:right;}
+
+.arch-svg{background:#020617;border-radius:10px;padding:10px;margin:14px 0;}
+
+footer{text-align:center;color:#1e293b;font-size:11px;padding:36px 0 18px;}
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <h1>📘 部署指南<small>從零到生產 · 約 90 分鐘</small></h1>
+  <div class="est">預計總時間：~90 分鐘</div>
+
+  <h3>📋 概覽</h3>
+  <a href="#overview">系統架構</a>
+  <a href="#prerequisites">先決條件</a>
+
+  <h3>🔧 設定步驟</h3>
+  <a href="#step1">① Fork repo</a>
+  <a href="#step2">② Alpaca 帳號</a>
+  <a href="#step3">③ Gmail 寄信</a>
+  <a href="#step4">④ GitHub Secrets</a>
+  <a href="#step5">⑤ accounts.json</a>
+  <a href="#step6">⑥ GitHub Pages</a>
+  <a href="#step7">⑦ 啟用 Actions</a>
+
+  <h3>✅ 驗證</h3>
+  <a href="#verify">DRY-RUN 測試</a>
+  <a href="#first-trade">第一次實單</a>
+
+  <h3>🔄 進階</h3>
+  <a href="#strategies">客製策略</a>
+  <a href="#monitor">監控與除錯</a>
+  <a href="#cost">成本估算</a>
+</nav>
+
+<main>
+
+<div class="hero">
+  <div>
+    <span class="badge">v1.0</span>
+    <span class="badge">2026-05-30</span>
+    <span class="badge">Tech-Rebalance</span>
+  </div>
+  <h1>🚀 部署指南 <span>從零到生產</span></h1>
+  <p>fork 我的 repo，用你自己的 GitHub + Alpaca + Gmail 帳號，
+  一步步把整套自動再平衡系統跑起來。預計 90 分鐘完成。</p>
+  <div class="toc">
+    <a href="#step1">① Fork</a>
+    <a href="#step2">② Alpaca</a>
+    <a href="#step3">③ Gmail</a>
+    <a href="#step4">④ Secrets</a>
+    <a href="#step5">⑤ accounts.json</a>
+    <a href="#step6">⑥ Pages</a>
+    <a href="#step7">⑦ Actions</a>
+    <a href="#verify">✅ 驗證</a>
+  </div>
+</div>
+
+<div class="box ok">
+  <strong>🖥️ 最簡單的方式：用桌面 App（推薦）</strong>
+  下載 <b>TradingAdmin</b> 桌面程式，<b>不用碰命令列、不用手動設 Secrets、不用手編 accounts.json</b>。
+  它用 GitHub API 直接幫你管理帳戶、券商金鑰、cron 排程與日誌；你只要在 App 裡：
+  <ol style="margin:8px 0 0 18px">
+    <li>登入 GitHub（<code>gh auth login</code>，App 會引導）</li>
+    <li>在「帳戶」分頁新增帳戶 → 填券商金鑰（App 直接幫你寫進 GitHub Secrets）</li>
+    <li>在「總覽」分頁設定 email App 密碼（<code>EMAIL_PASSWORD</code>）</li>
+  </ol>
+  下載：<a href="https://github.com/itemhsu/tradingadmin/releases/latest" target="_blank">github.com/itemhsu/tradingadmin/releases/latest</a>
+  （macOS DMG）。<br>
+  下面的「手動命令列」步驟僅供進階使用者或想了解底層的人參考——用 App 的話可略過步驟 ③④⑤。
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="overview">
+  <h2>📋 系統架構</h2>
+  <div class="meta">這套系統做什麼，由哪幾塊組成</div>
+
+  <p>每個美股交易日收盤後，GitHub Actions 自動跑：</p>
+  <ol>
+    <li>讀 <code>accounts.json</code> 列出的所有帳戶</li>
+    <li>每個帳戶依其指派的 <b>策略 JSON</b>（如 top10 / d2p2t6 / mom_6m_t20）計算當日應有持股</li>
+    <li>對比 Alpaca 當前持倉，下「最小量換股」訂單</li>
+    <li>生成 dashboard JSON 並推到 GitHub Pages</li>
+    <li>透過 Gmail SMTP 寄每日報告到你的 email</li>
+  </ol>
+
+  <h3>三個 repo（公開 + 私有混合）</h3>
+  <table>
+    <thead><tr><th>Repo</th><th>用途</th><th>可見性</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>tech-rebalance</code>（主 repo）</td>
+        <td>所有 Python 程式碼 + Actions workflow + 策略 JSON + 持倉狀態</td>
+        <td>建議 <b>Private</b>（含交易紀錄）</td>
+      </tr>
+      <tr>
+        <td><code>tech-rebalance-dashboard</code></td>
+        <td>GitHub Pages 入口，顯示績效、回測、log</td>
+        <td>必須 <b>Public</b>（免費 plan Pages 要求）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="box info">
+    <strong>💡 為何兩個 repo？</strong>
+    GitHub 免費 plan 不支援 Private repo 的 Pages。我們把 Python 程式（含 API key 痕跡）放 Private，把純 HTML/JSON dashboard 放 Public，兩者透過 Actions 同步。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="prerequisites">
+  <h2>📦 先決條件</h2>
+  <div class="meta">開始前確認你有這些東西</div>
+
+  <ul class="checklist">
+    <li>GitHub 帳號（免費即可，但 Pro $4/月可在 private repo 用 Pages）</li>
+    <li>email 帳號（建議 Gmail，方便看 Alpaca 確認信）</li>
+    <li>身分證件（Alpaca 註冊需要 — 線上拍照即可）</li>
+    <li>命令列基本操作（git、gh CLI）</li>
+    <li>~90 分鐘空檔（一次跑完最順）</li>
+  </ul>
+
+  <h3>準備工具</h3>
+<pre><span class="c"># macOS</span>
+brew install gh                <span class="c"># GitHub CLI</span>
+brew install python@3.11
+
+<span class="c"># Linux / WSL</span>
+sudo apt install gh python3.11
+
+<span class="c"># 驗證</span>
+gh --version
+python3 --version</pre>
+
+  <div class="box warn">
+    <strong>⚠️ 法律提醒</strong>
+    本系統會用 Alpaca API 下實單買股票，<b>是真實金錢交易</b>。Alpaca 提供 Paper Trading 模擬帳戶（推薦先用這個），熟悉後再切實單。本指南以 Paper Trading 為主軸；切實單請自行評估風險，作者不負責任何損失。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step1">
+  <h2><span class="step">①</span>Fork repo</h2>
+  <div class="meta">⏱️ 5 分鐘 · 把我的程式 fork 到你帳號下</div>
+
+  <h3>主 repo</h3>
+<pre><span class="c"># 1. 登入你的 GitHub</span>
+gh auth login
+
+<span class="c"># 2. Fork 兩個 repo 到你的帳號</span>
+gh repo fork itemhsu/tech-rebalance --clone=true
+gh repo fork itemhsu/tech-rebalance-dashboard --clone=true
+
+<span class="c"># 3. 進到主 repo 目錄</span>
+cd tech-rebalance</pre>
+
+  <h3>把主 repo 設成 private（保護你的交易紀錄）</h3>
+<pre>gh repo edit YOUR_USERNAME/tech-rebalance --visibility=private</pre>
+
+  <div class="box info">
+    <strong>💡 fork 後的 commits 仍會推到我的 upstream 嗎？</strong>
+    不會。Fork 是獨立的副本。除非你自己手動 PR 否則 commits 只在你 repo。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step2">
+  <h2><span class="step">②</span>申請 Alpaca 帳號</h2>
+  <div class="meta">⏱️ 20 分鐘（含身分驗證）· 取得 API Key 與 Secret</div>
+
+  <ol>
+    <li>到 <a href="https://alpaca.markets/" target="_blank">https://alpaca.markets</a> → <b>Sign Up</b></li>
+    <li>填基本資料 → 上傳身分證件（線上拍照）→ 等審核（通常 1-2 小時）</li>
+    <li>登入 <b>Dashboard</b> → 左側選單 <b>Paper Trading</b>（不是 Live）</li>
+    <li>右上角 <b>View API Keys</b> → <b>Generate New Key</b></li>
+    <li>記下 <code>API Key ID</code> 與 <code>Secret Key</code>（Secret 只顯示一次！）</li>
+  </ol>
+
+  <h3>每個策略要不同 Alpaca 帳戶嗎？</h3>
+  <p>Paper Trading 一個帳戶就夠（虛擬資金 $100K）。實單要分開：每個策略獨立帳戶才能追蹤各自績效。Alpaca 一個 email 可以開多個 sub-account。</p>
+
+  <div class="box ok">
+    <strong>✅ 建議初次設定</strong>
+    先用 <b>Paper Trading 1 個帳戶</b>，跑通流程 + 看 1-2 個月績效，再考慮開實單帳戶。
+  </div>
+
+  <div class="box danger">
+    <strong>⚠️ Secret Key 安全</strong>
+    永遠不要把 Secret 貼到 chat / Slack / 程式碼裡。只能放 GitHub Secrets。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step3">
+  <h2><span class="step">③</span>設定 Gmail 寄信</h2>
+  <div class="meta">⏱️ 5 分鐘 · 每日報告寄到你的 email</div>
+
+  <p>系統用 <b>Gmail SMTP</b> 寄信，只需要一組 Gmail
+  <b>App Password</b>（應用程式密碼），不需要第三方服務、不需信用卡、零成本。</p>
+
+  <ol>
+    <li>先確認該 Gmail 帳號已開啟 <b>兩步驟驗證</b>（App Password 的前提）：
+      <ul>
+        <li>到 <a href="https://myaccount.google.com/security" target="_blank">Google 帳戶 → 安全性</a></li>
+        <li>找「兩步驟驗證」→ 若未開啟先開啟</li>
+      </ul>
+    </li>
+    <li>產生 App Password：
+      <ul>
+        <li>到 <a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a></li>
+        <li>App 名稱填任意（例如 <code>tech-rebalance</code>）→ <b>建立</b></li>
+        <li>記下顯示的 <b>16 碼密碼</b>（格式 <code>abcd efgh ijkl mnop</code>）</li>
+      </ul>
+    </li>
+    <li>把 16 碼<b>去掉空格</b>後存成 GitHub Secret <code>EMAIL_PASSWORD</code>（下一步詳述）。</li>
+  </ol>
+
+  <div class="box warn">
+    <strong>🔑 App Password ≠ 你的 Gmail 登入密碼</strong>
+    一定要用上面產生的 16 碼專用密碼。直接用一般登入密碼會被 Google 擋下
+    （<code>535 BadCredentials</code>）。
+  </div>
+
+  <div class="box tip">
+    <strong>📧 寄件人與收件人</strong>
+    寄件人 = App Password 所屬的 Gmail（<code>EMAIL_SENDER</code>）。
+    收件人由 <code>accounts.json</code> 每個帳戶的 <code>email_recipients</code> 決定，
+    可一個帳戶寄給多人。沒設 <code>EMAIL_SENDER</code> 時自動用收件人當寄件人。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step4">
+  <h2><span class="step">④</span>設定 GitHub Secrets</h2>
+  <div class="meta">⏱️ 10 分鐘 · 把 API keys 安全地放進 GitHub</div>
+
+  <p>到你的 repo 設定頁：<code>github.com/YOUR_USERNAME/tech-rebalance/settings/secrets/actions</code></p>
+
+  <h3>必填 Secrets</h3>
+  <table>
+    <thead><tr><th>Secret 名稱</th><th>值來自</th><th>說明</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>ACC1_ALPACA_KEY</code></td>
+        <td>步驟 ② Alpaca</td>
+        <td>第一個帳戶的 API Key ID</td>
+      </tr>
+      <tr>
+        <td><code>ACC1_ALPACA_SECRET</code></td>
+        <td>步驟 ② Alpaca</td>
+        <td>第一個帳戶的 Secret Key</td>
+      </tr>
+      <tr>
+        <td><code>ACC1_BASE_URL</code></td>
+        <td>固定值</td>
+        <td><code>https://paper-api.alpaca.markets</code>（Paper）<br>
+        實單改 <code>https://api.alpaca.markets</code></td>
+      </tr>
+      <tr>
+        <td><code>EMAIL_SENDER</code></td>
+        <td>步驟 ③ 的 Gmail（App Password 所屬帳號）</td>
+        <td>e.g. <code>you@gmail.com</code>，同時是 SMTP 登入帳號</td>
+      </tr>
+      <tr>
+        <td><code>EMAIL_PASSWORD</code></td>
+        <td>步驟 ③ 產生的 16 碼 App Password</td>
+        <td><b>去掉空格</b>，e.g. <code>abcdefghijklmnop</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="box tip">
+    <strong>💡 用桌面 App 的話，這一步全自動</strong>
+    在 TradingAdmin App 的「帳戶」分頁新增帳戶時直接填券商金鑰，App 會幫你寫進
+    <code>ACC{N}_ALPACA_KEY</code> / <code>ACC{N}_ALPACA_SECRET</code>；
+    email 密碼在「總覽」分頁設定 <code>EMAIL_PASSWORD</code>。你不需要記任何 Secret 名稱。
+  </div>
+
+  <div class="box info">
+    <strong>📮 收件人在哪設？</strong>
+    收件人不是 Secret，而是寫在 <code>accounts.json</code> 每個帳戶的
+    <code>email_recipients</code> 陣列（步驟 ⑤）。這樣不同帳戶可寄給不同人。
+  </div>
+
+  <h3>多帳戶?再加 ACC2 / ACC3 ...</h3>
+  <p>每多一個帳戶就加三個 Secret：<code>ACC2_ALPACA_KEY</code>、<code>ACC2_ALPACA_SECRET</code>、<code>ACC2_BASE_URL</code>。</p>
+
+  <div class="box info">
+    <strong>用 gh CLI 一次設好（手動方式）</strong>
+<pre>gh secret set ACC1_ALPACA_KEY      --body "你的 Alpaca key"
+gh secret set ACC1_ALPACA_SECRET   --body "你的 Alpaca secret"
+gh secret set ACC1_BASE_URL        --body "https://paper-api.alpaca.markets"
+gh secret set EMAIL_SENDER         --body "you@gmail.com"
+gh secret set EMAIL_PASSWORD       --body "abcdefghijklmnop"</pre>
+  </div>
+
+  <div class="box tip">
+    <strong>📊 Dashboard 自動更新的金鑰由維護者設定（你不用碰）</strong>
+    讓主 repo 把 dashboard 推到公開 Pages repo 的金鑰是 <code>PAGES_TOKEN</code>，
+    屬一次性基礎建設、由系統維護者設定一次即可，<b>一般使用者完全不需要處理</b>。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step5">
+  <h2><span class="step">⑤</span>編輯 accounts.json</h2>
+  <div class="meta">⏱️ 10 分鐘 · 告訴系統有哪些帳戶、各跑什麼策略</div>
+
+  <p>編輯 <code>accounts.json</code>（位於 repo 根目錄）。最簡單的單帳戶配置：</p>
+
+<pre>{
+  "accounts": [
+    {
+      "id": "1",
+      "strategy": "top10",
+      "label": "帳戶 #1 (TOP10 月度)",
+      "enabled": true,
+      "alpaca_secret_prefix": "ACC1",
+      "data_dir": "data/1"
+    }
+  ]
+}</pre>
+
+  <h3>多帳戶配置範例</h3>
+<pre>{
+  "accounts": [
+    {
+      "id": "1", "strategy": "top10",
+      "label": "TOP10 月度",
+      "enabled": true, "alpaca_secret_prefix": "ACC1", "data_dir": "data/1"
+    },
+    {
+      "id": "2", "strategy": "d2p2t6",
+      "label": "D2P2T6 多元",
+      "enabled": true, "alpaca_secret_prefix": "ACC2", "data_dir": "d2p2t6/data/1"
+    },
+    {
+      "id": "3", "strategy": "mom_6m_t20",
+      "label": "MOM-6m 動能",
+      "enabled": true, "alpaca_secret_prefix": "ACC3", "data_dir": "data/3"
+    }
+  ]
+}</pre>
+
+  <h3>欄位說明</h3>
+  <table>
+    <tr><td><code>id</code></td><td>帳戶識別字（用於檔案路徑、log）</td></tr>
+    <tr><td><code>strategy</code></td><td>對應 <code>strategies/{strategy}.json</code> 檔名</td></tr>
+    <tr><td><code>label</code></td><td>顯示在 email、dashboard 的人類可讀名稱</td></tr>
+    <tr><td><code>enabled</code></td><td>false 時暫停執行（保留設定）</td></tr>
+    <tr><td><code>alpaca_secret_prefix</code></td><td>對應 GitHub Secrets <code>{prefix}_ALPACA_KEY</code></td></tr>
+    <tr><td><code>data_dir</code></td><td>持倉狀態 + log 寫入路徑</td></tr>
+  </table>
+
+  <h3>可選的策略</h3>
+  <p>repo 內已有 <code>strategies/</code> 下的策略：</p>
+  <table>
+    <thead><tr><th>id</th><th>邏輯</th><th>建議用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>top10</code></td><td>科技 25 取市值前 10，月度</td><td>入門簡單款</td></tr>
+      <tr><td><code>d2p2t6</code></td><td>軍火 2 + 醫藥 2 + 科技 6 月度</td><td>跨領域分散</td></tr>
+      <tr><td><code>mom_6m_t20</code></td><td>6m 動能 watchlist 20 取前 10</td><td>主動進取</td></tr>
+      <tr><td><code>tech100_mom_6m_t10</code></td><td>科技 100 + 6m 動能（CAGR 37.77%）</td><td>高報酬高波動</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step6">
+  <h2><span class="step">⑥</span>啟用 GitHub Pages</h2>
+  <div class="meta">⏱️ 5 分鐘 · 讓你的 dashboard 可在網路上看</div>
+
+  <ol>
+    <li>到 dashboard repo: <code>github.com/YOUR_USERNAME/tech-rebalance-dashboard/settings/pages</code></li>
+    <li><b>Source</b> 選 <code>Deploy from a branch</code></li>
+    <li><b>Branch</b> 選 <code>main</code> / <code>/</code>（root）→ <b>Save</b></li>
+    <li>等 1-2 分鐘 → 頁面會顯示你的網址：
+      <br><code>https://YOUR_USERNAME.github.io/tech-rebalance-dashboard/</code></li>
+  </ol>
+
+  <h3>主 repo 也啟用（顯示 momentum backtest dashboard）</h3>
+  <p>到主 repo: <code>Settings → Pages</code></p>
+  <ul>
+    <li><b>Source</b>: <code>Deploy from a branch</code></li>
+    <li><b>Branch</b>: <code>main</code> / <code>/docs</code></li>
+    <li>網址：<code>https://YOUR_USERNAME.github.io/tech-rebalance/momentum/</code></li>
+  </ul>
+
+  <div class="box warn">
+    <strong>⚠️ 主 repo 如果是 private</strong>
+    Free plan 不支援 private repo Pages。要嘛升級 Pro ($4/月)，要嘛改用 dashboard repo 來 host 主 repo 的 docs/ 內容（workflow 會自動 sync）。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="step7">
+  <h2><span class="step">⑦</span>啟用 GitHub Actions</h2>
+  <div class="meta">⏱️ 5 分鐘 · 讓系統自動每天跑</div>
+
+  <p>Fork 後 Actions 預設是關掉的（GitHub 安全機制）。</p>
+
+  <ol>
+    <li>到主 repo: <code>Actions</code> 分頁</li>
+    <li>會看到 banner：<i>"Workflows aren't being run on this forked repository"</i></li>
+    <li>點 <b>I understand my workflows, go ahead and enable them</b></li>
+  </ol>
+
+  <h3>排程觸發時間</h3>
+  <table>
+    <thead><tr><th>Workflow</th><th>排程 (UTC)</th><th>說明</th></tr></thead>
+    <tbody>
+      <tr><td><code>Daily All Accounts</code></td><td>21:30 + 22:00 (備援)</td><td>每日跑所有 enabled 帳戶</td></tr>
+      <tr><td><code>MOM-6m-T20 Monthly</code></td><td>16:30 每月 1-7 日</td><td>月度動能策略</td></tr>
+      <tr><td><code>Momentum Tool v2</code></td><td>22:00</td><td>更新 backtest dashboard</td></tr>
+    </tbody>
+  </table>
+
+  <p>UTC 21:30 = 台灣 05:30 隔日早上 = 美東 17:30 收盤後 1.5 小時。</p>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="verify">
+  <h2>✅ 驗證：先跑 DRY-RUN 確保流程通</h2>
+  <div class="meta">⏱️ 10 分鐘 · 不下單，只模擬整個流程</div>
+
+  <h3>手動觸發 Daily All Accounts（dry-run 模式）</h3>
+  <ol>
+    <li>到主 repo → <b>Actions</b> → <code>Daily All Accounts</code></li>
+    <li>點 <b>Run workflow</b> 按鈕</li>
+    <li><b>dry_run</b> 輸入 <code>true</code> → <b>Run workflow</b></li>
+    <li>等 2-3 分鐘執行</li>
+  </ol>
+
+  <h3>驗證 checklist</h3>
+  <ul class="checklist">
+    <li>workflow 變綠（所有 step 成功）</li>
+    <li>log 中看到 <code>[INFO] trader: 無再平衡訂單需要執行</code>（dry-run + 空帳戶）</li>
+    <li>Alpaca dashboard 沒有任何訂單（確認 dry_run 生效）</li>
+    <li>email 收到一封「[DRY RUN]」開頭的測試報告（需設好 <code>EMAIL_SENDER</code> + <code>EMAIL_PASSWORD</code> 並在 accounts.json 填 <code>email_recipients</code>）</li>
+  </ul>
+
+  <h3>用 gh CLI 監看</h3>
+<pre>gh run watch                              <span class="c"># 跟著最新 run 的 log</span>
+gh run view --log-failed                  <span class="c"># 失敗 step 的 log</span>
+gh run list --workflow=daily_all_accounts.yml --limit 3</pre>
+
+  <div class="box ok">
+    <strong>✅ dry-run 通了 = 環境設好了</strong>
+    可以放心讓排程自動跑，明天早上就會收到第一封實際報告（dry_run=false）。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="first-trade">
+  <h2>🎯 第一次實單會發生什麼</h2>
+  <div class="meta">⏱️ 等明天排程觸發 · 觀察結果</div>
+
+  <p>排程 21:30 UTC 自動跑（無需手動）。首次執行：</p>
+  <ol>
+    <li>Alpaca 帳戶從 0 持股 → 系統會把虛擬資金 $100K 平均分配到該策略應有的 10 檔</li>
+    <li>每檔買約 $10K（依當天股價算整股）</li>
+    <li>每筆下單 Alpaca 寄一封確認信</li>
+    <li>結束時系統寄一封「每日報告」email，含當日 NAV、變動、所有訂單</li>
+  </ol>
+
+  <h3>怎麼看每天結果</h3>
+  <ul>
+    <li><b>Alpaca Dashboard</b>: 看實際持倉與訂單成交</li>
+    <li><b>Email 每日報告</b>: KPI + 持倉表 + 排名 + 訂單</li>
+    <li><b>Dashboard 網頁</b>: <code>https://YOUR_USERNAME.github.io/tech-rebalance-dashboard/</code></li>
+    <li><b>Log 頁面</b>: <code>https://YOUR_USERNAME.github.io/tech-rebalance-dashboard/log/?account=1</code> 結構化交易事件</li>
+    <li><b>Backtest 比較</b>: <code>https://YOUR_USERNAME.github.io/tech-rebalance-dashboard/momentum/</code></li>
+  </ul>
+
+  <div class="box info">
+    <strong>📧 email 三大按鈕</strong>
+    每日報告會有 3 個按鈕：📊 Dashboard / 📋 交易 Log / 📈 回測對比，
+    一鍵跳到對應頁面。
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="strategies">
+  <h2>🔧 新增 / 修改策略</h2>
+  <div class="meta">⏱️ 5-10 分鐘 · 純 JSON 設定，零 Python 修改</div>
+
+  <p>系統用 <b>v3 Schema</b> 描述策略，加新策略只要寫一個 JSON 檔。</p>
+
+  <h3>範例：新建「科技 50 + 9m 動能」策略</h3>
+<pre><span class="c"># 1. 複製模板</span>
+cp strategies/mom_6m_t20.json strategies/mom_9m_t50.json
+
+<span class="c"># 2. 編輯關鍵欄位：</span>
+{
+  "id": "mom_9m_t50",
+  "meta": {"name": "MOM-9m 科技 50 動能"},
+  "selection": {
+    "method": "weighted_percentile",
+    "n": 10, "watchlist_top_n": 50, "watchlist_metric": "market_cap"
+  },
+  "ranking": {
+    "factors": [
+      { "field": "price_momentum_9m", "weight": 1.0, "direction": "desc" }
+    ]
+  },
+  "backtest": {
+    "color": "#a855f7", "group": "momentum", "order": 110
+  }
+}
+
+<span class="c"># 3. 在 accounts.json 加帳戶或修改既有帳戶</span>
+{"id": "3", "strategy": "mom_9m_t50", ...}
+
+<span class="c"># 4. push</span>
+git add strategies/mom_9m_t50.json accounts.json
+git commit -m "feat: add mom_9m_t50 strategy"
+git push</pre>
+
+  <p>排程下次跑時自動採用新策略。回測也會自動納入 momentum dashboard。</p>
+
+  <h3>可用 selection methods</h3>
+  <table>
+    <tr><td><code>top_n_by_metric</code></td><td>依單一指標排序取前 N（如純市值）</td></tr>
+    <tr><td><code>top_n_per_group</code></td><td>分組各取 N 檔（如 D2P2T6）</td></tr>
+    <tr><td><code>factor_score</code></td><td>多因子加權打分</td></tr>
+    <tr><td><code>weighted_percentile</code></td><td>watchlist 預篩 + 單因子（典型動能）</td></tr>
+    <tr><td><code>weighted_percentile_per_group</code></td><td>分組 watchlist + 因子排序</td></tr>
+    <tr><td><code>buy_and_hold</code></td><td>買入持有不調整（基準用）</td></tr>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="monitor">
+  <h2>👀 監控與除錯</h2>
+  <div class="meta">怎麼確認系統健康、出錯怎麼查</div>
+
+  <h3>每日例行檢查</h3>
+  <ul class="checklist">
+    <li>早上 8 點檢查 inbox：應有「每日報告」email</li>
+    <li>沒收到 → 到 GitHub Actions 看排程 run 是否成功</li>
+    <li>NAV 變動異常 → 看 email 內的「今日交易」段</li>
+    <li>有交易 → log 頁面看詳細事件（trigger / reason / 守則）</li>
+  </ul>
+
+  <h3>常用除錯指令</h3>
+<pre><span class="c"># 看最近 5 次 daily 執行狀態</span>
+gh run list --workflow=daily_all_accounts.yml --limit 5
+
+<span class="c"># 看失敗 run 的 log（找特定 step）</span>
+gh run view RUN_ID --log-failed
+
+<span class="c"># 手動觸發補跑（dry-run 安全測試）</span>
+gh workflow run daily_all_accounts.yml -f dry_run=true
+
+<span class="c"># 看本機 trade_events（jsonl 格式可 jq 查詢）</span>
+jq 'select(.type=="ORDER_PLANNED")' data/1/trade_events.jsonl</pre>
+
+  <h3>常見錯誤</h3>
+  <table>
+    <thead><tr><th>症狀</th><th>原因</th><th>修法</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>workflow 0 秒失敗</td>
+        <td>YAML 語法錯（多半是 PR merge 衝突）</td>
+        <td>用 <code>python3 -c "import yaml; yaml.safe_load(open('.github/workflows/foo.yml'))"</code> 驗</td>
+      </tr>
+      <tr>
+        <td><code>Alpaca 金鑰未設定</code></td>
+        <td>Secret 名稱與 accounts.json 的 prefix 對不上</td>
+        <td>確認 <code>ACC{N}_ALPACA_KEY</code> 對應 <code>"alpaca_secret_prefix": "ACC{N}"</code></td>
+      </tr>
+      <tr>
+        <td>郵件沒寄出 <code>535 BadCredentials</code></td>
+        <td><code>EMAIL_PASSWORD</code> 用了一般登入密碼，或沒去掉空格</td>
+        <td>用步驟 ③ 的 16 碼 App Password，存 Secret 時不含空格</td>
+      </tr>
+      <tr>
+        <td>策略 schema validation 失敗</td>
+        <td>JSON 不符 v3 schema</td>
+        <td><code>python3 -c "import json,jsonschema; ..."</code> 在本機驗</td>
+      </tr>
+      <tr>
+        <td>Dashboard 顯示 404</td>
+        <td>Pages 未啟用 / <code>PAGES_TOKEN</code> 失效</td>
+        <td>步驟 ⑥ 啟用 Pages；確認維護者已設好 <code>PAGES_TOKEN</code></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section id="cost">
+  <h2>💰 成本估算</h2>
+  <div class="meta">這套系統一年要多少錢</div>
+
+  <table>
+    <thead><tr><th>項目</th><th>免費 / 付費</th><th>成本</th></tr></thead>
+    <tbody>
+      <tr><td>GitHub Actions（公開 repo）</td><td>免費 unlimited</td><td>$0</td></tr>
+      <tr><td>GitHub Actions（私有 repo）</td><td>免費 2000 分鐘/月</td><td>$0（我們用量 ~30 分鐘/月）</td></tr>
+      <tr><td>GitHub Pages</td><td>免費（公開 repo）</td><td>$0</td></tr>
+      <tr><td>GitHub Pro（讓私有 repo 有 Pages）</td><td>選用</td><td>$4/月</td></tr>
+      <tr><td>Alpaca Paper Trading</td><td>免費</td><td>$0</td></tr>
+      <tr><td>Alpaca Live Trading</td><td>0 佣金 + Reg fees</td><td>~$0.01/筆</td></tr>
+      <tr><td>Gmail SMTP 寄信</td><td>免費（個人帳號約 500 封/天）</td><td>$0</td></tr>
+      <tr><td>yfinance（回測資料）</td><td>免費</td><td>$0</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box ok">
+    <strong>💡 全免費跑得起來</strong>
+    用公開主 repo + 免費 Alpaca Paper Trading + 免費 Gmail SMTP → 零成本。
+    想保護交易紀錄就升 Pro $4/月。
+  </div>
+</section>
+
+<footer>
+  Tech-Rebalance 部署指南 v1.0 · 2026-05-30 · <a href="https://github.com/itemhsu/tech-rebalance">原始 repo</a>
+</footer>
+
+</main>
+
+<script>
+const links = document.querySelectorAll('.sidebar a[href^="#"]');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if(e.isIntersecting){
+      links.forEach(l => l.classList.remove('active'));
+      const m = document.querySelector(`.sidebar a[href="#${e.target.id}"]`);
+      if(m) m.classList.add('active');
+    }
+  });
+},{threshold:0.15,rootMargin:'-60px 0px -60% 0px'});
+document.querySelectorAll('section[id]').forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>
