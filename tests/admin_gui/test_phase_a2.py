@@ -127,6 +127,8 @@ def test_G29_no_sendgrid_in_overview_globals():
     import admin_gui.views.overview_view as ov
     assert "SENDGRID_API_KEY" not in ov._GLOBAL_SECRETS
     assert "EMAIL_SENDER" not in ov._GLOBAL_SECRETS   # 非機密，不在遮罩清單
+    assert "DASHBOARD_PUSH_TOKEN" not in ov._GLOBAL_SECRETS  # 幽靈設定已移除
+    assert ov._GLOBAL_SECRETS == ["EMAIL_PASSWORD"]   # 一般使用者只需這一個
 
 
 # ── 純 API 模式：GhContentsStore 透過 gh api 讀寫，不需 clone ─────────────

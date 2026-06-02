@@ -47,11 +47,12 @@ def _local_store():
 def test_overview_global_settings_builds(qapp, no_net):
     from admin_gui.views.overview_view import OverviewView
     v = OverviewView(SLUG)
-    # 寄件人是明文可編輯欄；機密只剩 EMAIL_PASSWORD/DASHBOARD_PUSH_TOKEN（無 SendGrid、無 EMAIL_SENDER）
+    # 寄件人是明文可編輯欄；機密只剩 EMAIL_PASSWORD（無 SendGrid、無 EMAIL_SENDER、無幽靈 DASHBOARD_PUSH_TOKEN）
     assert v.sender_edit is not None
     assert "EMAIL_PASSWORD" in v.sec_labels
     assert "SENDGRID_API_KEY" not in v.sec_labels
     assert "EMAIL_SENDER" not in v.sec_labels
+    assert "DASHBOARD_PUSH_TOKEN" not in v.sec_labels
 
 
 def test_accounts_view_builds_and_lists(qapp, no_net):

@@ -19,9 +19,10 @@ from admin_gui.services.audit_log import AuditLog
 from admin_gui.services.global_config import GlobalConfig
 from admin_gui.services import probes
 
-# 機密 Secret（遮罩、只顯示有無）。SendGrid 已棄用，移除。
-# EMAIL_SENDER 不具機密性 → 不在此清單，改用 GlobalConfig 顯示明文。
-_GLOBAL_SECRETS = ["EMAIL_PASSWORD", "DASHBOARD_PUSH_TOKEN"]
+# 機密 Secret（遮罩、只顯示有無）。一般使用者只需要 EMAIL_PASSWORD（email App 密碼）。
+# 移除：SendGrid（已棄用）、DASHBOARD_PUSH_TOKEN（幽靈設定，系統實際用 PAGES_TOKEN，
+#       屬一次性基礎建設、非使用者該碰的東西）。EMAIL_SENDER 非機密 → 走 GlobalConfig 明文。
+_GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
 class _SetSecretDialog(QDialog):
