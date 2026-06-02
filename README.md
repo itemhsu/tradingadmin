@@ -14,6 +14,11 @@
 
 ---
 
+## 📖 部署指南
+
+完整從零到生產的設定教學（含桌面 App 與手動兩種方式）：
+**[線上部署指南](https://itemhsu.github.io/tradingadmin/setup-guide.html)**
+
 ## 📥 下載（macOS）
 
 到 **[Releases](../../releases/latest)** 下載 `TradingAdmin-macOS.dmg`。
