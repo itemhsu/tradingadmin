@@ -1,5 +1,7 @@
 # TradingAdmin — 交易系統管理控制台（桌面 GUI）
 
+[![Build & Release (macOS)](https://github.com/itemhsu/tradingadmin/actions/workflows/build.yml/badge.svg)](https://github.com/itemhsu/tradingadmin/actions/workflows/build.yml)
+
 跨平台桌面 App，用來管理你的自動交易系統帳戶 —— 新增/編輯帳戶、設定券商
 金鑰、編輯 cron 排程、查看操作與排程日誌。
 
