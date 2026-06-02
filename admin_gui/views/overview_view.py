@@ -105,9 +105,27 @@ class OverviewView(QWidget):
         fe.addRow("GitHub repo", QLabel(self.repo_slug))
         mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
         fe.addRow("存取方式", mode)
+        # 重新開設定精靈（換 repo / 重新 gh 登入）——首次設定完成後仍可進入
+        wiz_btn = QPushButton("⚙️ 重新執行設定精靈…")
+        wiz_btn.clicked.connect(self._open_wizard)
+        fe.addRow("", wiz_btn)
         right.addWidget(gb2)
         right.addStretch()
         self.refresh()
+
+    def _open_wizard(self):
+        """重新開首次設定精靈：可改 repo 或重新 gh 登入。"""
+        from admin_gui.views.wizard import SetupWizard
+        old_slug = self.config.get("repo_slug")
+        dlg = SetupWizard(self.config, self)
+        dlg.exec()
+        new_slug = self.config.get("repo_slug")
+        if new_slug and new_slug != old_slug:
+            QMessageBox.information(
+                self, "已更新 repo",
+                f"目標 repo 已改為 {new_slug}。\n請重新啟動 App 以套用新 repo。")
+        else:
+            self.refresh()
 
     def refresh(self):
         try:
