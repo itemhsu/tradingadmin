@@ -58,15 +58,20 @@ def test_overview_global_settings_builds(qapp, no_net):
 
 def test_overview_login_and_dashboard(qapp, no_net):
     """O-1/O-2/O-3：不顯示 repo slug、顯示登入名、回測分析連結。"""
-    from admin_gui.views.overview_view import OverviewView, dashboard_backtest_url
+    from admin_gui.views.overview_view import (
+        OverviewView, dashboard_backtest_url, dashboard_mvp_url)
     v = OverviewView(SLUG)
     v.refresh()
     # G-70：登入名
     assert "itemhsu" in v.user_lbl.text()
-    # G-71：Dashboard 回測分析連結依登入名推導
+    # G-71：回測分析連結依登入名「合成」（非寫死），文字改為「前往回測分析」
     assert dashboard_backtest_url("itemhsu") == \
         "https://itemhsu.github.io/tech-rebalance-dashboard/momentum/"
-    assert "itemhsu.github.io" in v.dash_lbl.text()
+    assert "前往回測分析" in v.dash_lbl.text() and "itemhsu.github.io" in v.dash_lbl.text()
+    # 新增：持倉 Dashboard 連結，URL 由登入名 + 帳戶「合成」
+    assert dashboard_mvp_url("itemhsu", "1") == \
+        "https://itemhsu.github.io/tech-rebalance-dashboard/mvp_dashboard.html?a=1"
+    assert "前往持倉 Dashboard" in v.mvp_lbl.text() and "mvp_dashboard.html?a=1" in v.mvp_lbl.text()
     # G-69：不顯示 repo slug
     from PySide6.QtWidgets import QLabel
     blob = " ".join(lbl.text() for lbl in v.findChildren(QLabel))

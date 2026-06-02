@@ -25,9 +25,19 @@ from admin_gui.services import probes
 _GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
+def _dashboard_host(login: str) -> str:
+    """依 GitHub 登入名合成 dashboard 站台 host（非寫死）。"""
+    return f"https://{login}.github.io/tech-rebalance-dashboard"
+
+
 def dashboard_backtest_url(login: str) -> str:
-    """O-3：依 GitHub 登入名推導 Dashboard 回測分析網頁 URL。"""
-    return f"https://{login}.github.io/tech-rebalance-dashboard/momentum/"
+    """依登入名合成「回測分析」網頁 URL。"""
+    return f"{_dashboard_host(login)}/momentum/"
+
+
+def dashboard_mvp_url(login: str, account: str = "1") -> str:
+    """依登入名 + 帳戶合成「持倉 Dashboard」URL（路徑非寫死）。"""
+    return f"{_dashboard_host(login)}/mvp_dashboard.html?a={account}"
 
 
 class _SetSecretDialog(QDialog):
@@ -111,6 +121,8 @@ class OverviewView(QWidget):
         # O-2：顯示 GitHub 登入名（不顯示 repo slug）
         self.user_lbl = QLabel("…"); fe.addRow("GitHub 登入", self.user_lbl)
         # O-3：Dashboard 回測分析網頁連結（依登入名推導）
+        self.mvp_lbl = QLabel("…"); self.mvp_lbl.setOpenExternalLinks(True)
+        fe.addRow("持倉 Dashboard", self.mvp_lbl)
         self.dash_lbl = QLabel("…"); self.dash_lbl.setOpenExternalLinks(True)
         fe.addRow("回測分析", self.dash_lbl)
         mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
@@ -151,10 +163,13 @@ class OverviewView(QWidget):
         login = probes.gh_login()
         if login:
             self.user_lbl.setText(login)
-            url = dashboard_backtest_url(login)
-            self.dash_lbl.setText(f'<a href="{url}">📈 開啟回測分析 Dashboard</a>')
+            self.mvp_lbl.setText(
+                f'<a href="{dashboard_mvp_url(login)}">📊 前往持倉 Dashboard</a>')
+            self.dash_lbl.setText(
+                f'<a href="{dashboard_backtest_url(login)}">📈 前往回測分析</a>')
         else:
             self.user_lbl.setText("（未登入）")
+            self.mvp_lbl.setText("（登入後顯示）")
             self.dash_lbl.setText("（登入後顯示）")
 
     def _set(self, name):
