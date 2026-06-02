@@ -1,0 +1,73 @@
+"""admin_gui/app.py — 交易系統管理控制台（PySide6 桌面 GUI）進入點。
+
+純 API 模式：不需 clone repo，只透過 GitHub API（gh CLI）讀寫 accounts.json、
+workflow yml 與少數資料檔。只要 gh 已登入 + 指定一個 repo（owner/repo）即可。
+
+執行：
+    pip install PySide6
+    python -m admin_gui.app                       # 用 config 記住的 repo
+    python -m admin_gui.app itemhsu/tech-rebalance # 指定 repo slug
+"""
+from __future__ import annotations
+
+import sys
+
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
+
+from admin_gui.views.overview_view import OverviewView
+from admin_gui.views.accounts_view import AccountsView
+from admin_gui.views.schedule_view import ScheduleView
+from admin_gui.views.log_view import LogView
+
+_DEFAULT_SLUG = "itemhsu/tech-rebalance"
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, repo_slug: str, store=None):
+        super().__init__()
+        self.repo_slug = repo_slug
+        self.setWindowTitle(f"交易系統管理控制台 — {repo_slug}")
+        self.resize(960, 620)
+
+        if store is None:
+            from admin_gui.services.repo_store import make_store
+            store = make_store(repo_slug=repo_slug)
+
+        # 4 分頁（總覽=全域設定 / 帳戶 / 排程 / 日誌）
+        tabs = QTabWidget()
+        tabs.addTab(OverviewView(repo_slug), "📊 總覽")
+        tabs.addTab(AccountsView(repo_slug, store=store), "👥 帳戶")
+        tabs.addTab(ScheduleView(repo_slug, store=store), "⏰ 排程")
+        tabs.addTab(LogView(repo_slug), "📜 日誌")
+        self.setCentralWidget(tabs)
+
+
+def main(argv=None) -> int:
+    argv = argv if argv is not None else sys.argv
+
+    # macOS 從 Finder/DMG 啟動不繼承 shell PATH → 補上 Homebrew 等路徑，才找得到 gh
+    from admin_gui.services.env_fix import ensure_path
+    ensure_path()
+
+    app = QApplication(argv[:1])
+
+    from admin_gui.services.global_config import GlobalConfig
+    from admin_gui.views.wizard import SetupWizard, is_first_run
+    cfg = GlobalConfig()
+
+    if len(argv) > 1:
+        slug = argv[1]
+    elif is_first_run(cfg):
+        wiz = SetupWizard(cfg)
+        wiz.exec()
+        slug = wiz.chosen_repo or cfg.get("repo_slug") or _DEFAULT_SLUG
+    else:
+        slug = cfg.get("repo_slug") or _DEFAULT_SLUG
+
+    win = MainWindow(slug)
+    win.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

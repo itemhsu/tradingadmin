@@ -1,0 +1,60 @@
+{
+  "accounts": [
+    {
+      "id": "1",
+      "strategy": "top10",
+      "label": "Sample Account #1 (TOP10 Daily)",
+      "enabled": true,
+      "broker": "alpaca",
+      "environment": "paper",
+      "secret_prefix": "ACC1",
+      "alpaca_secret_prefix": "ACC1",
+      "data_dir": "data/1",
+      "email_recipients": [
+        "you@example.com"
+      ]
+    },
+    {
+      "id": "2",
+      "strategy": "d2p2t6",
+      "label": "Sample Account #2 (D2P2T6)",
+      "enabled": true,
+      "broker": "alpaca",
+      "environment": "paper",
+      "secret_prefix": "ACC2",
+      "alpaca_secret_prefix": "ACC2",
+      "data_dir": "d2p2t6/data/1",
+      "runner_sub_id": "1",
+      "email_recipients": [
+        "you@example.com"
+      ]
+    },
+    {
+      "id": "3",
+      "strategy": "top10",
+      "label": "Sample Account #3",
+      "enabled": false,
+      "broker": "tradier",
+      "environment": "sandbox",
+      "secret_prefix": "ACC3",
+      "data_dir": "data/3",
+      "email_recipients": [
+        "you@example.com"
+      ]
+    },
+    {
+      "id": "4",
+      "strategy": "top10",
+      "label": "Sample Account #4",
+      "enabled": true,
+      "broker": "alpaca",
+      "environment": "paper",
+      "secret_prefix": "ACC4",
+      "alpaca_secret_prefix": "ACC4",
+      "data_dir": "data/4",
+      "email_recipients": [
+        "you@example.com"
+      ]
+    }
+  ]
+}

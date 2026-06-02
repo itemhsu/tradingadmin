@@ -1,0 +1,174 @@
+"""admin_gui/views/overview_view.py — 總覽＝全域管理（Phase A-2 重設計）。
+
+只放跟個別帳戶無關的：Email 發送、Dashboard 推送、環境/登入、全域 log。
+帳戶 NAV/CRUD 全在「帳戶」分頁，總覽不再重複。
+"""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel,
+    QPushButton, QLineEdit, QDialog, QDialogButtonBox, QMessageBox, QPlainTextEdit,
+)
+from PySide6.QtCore import QTimer, Qt
+
+from admin_gui.services.gh_client import GhClient, GhError
+from admin_gui.services.audit_log import AuditLog
+from admin_gui.services.global_config import GlobalConfig
+from admin_gui.services import probes
+
+# 機密 Secret（遮罩、只顯示有無）。SendGrid 已棄用，移除。
+# EMAIL_SENDER 不具機密性 → 不在此清單，改用 GlobalConfig 顯示明文。
+_GLOBAL_SECRETS = ["EMAIL_PASSWORD", "DASHBOARD_PUSH_TOKEN"]
+
+
+class _SetSecretDialog(QDialog):
+    def __init__(self, name, parent=None):
+        super().__init__(parent); self.setWindowTitle(f"設定 {name}")
+        f = QFormLayout(self)
+        self.v = QLineEdit(); self.v.setEchoMode(QLineEdit.Password)
+        f.addRow(f"{name} 的值", self.v)
+        f.addRow(QLabel("⚠ 經 gh 寫入 GitHub Secrets，不存本機檔。"))
+        b = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        b.accepted.connect(self.accept); b.rejected.connect(self.reject); f.addRow(b)
+
+
+class OverviewView(QWidget):
+    def __init__(self, repo_slug: str = "itemhsu/tech-rebalance", parent=None):
+        super().__init__(parent)
+        self.repo_slug = repo_slug
+        self.gh = GhClient(repo_slug)
+        self.audit = AuditLog()
+        self.config = GlobalConfig()
+
+        # 兩欄佈局：左欄=Email 發送，右欄=環境/登入＋全域日誌；
+        # 兩欄各佔一半、平均使用視窗寬度，右側不再留白。
+        cols = QHBoxLayout(self)
+        left_w = QWidget(); left = QVBoxLayout(left_w); left.setContentsMargins(0, 0, 0, 0)
+        right_w = QWidget(); right = QVBoxLayout(right_w); right.setContentsMargins(0, 0, 0, 0)
+        cols.addWidget(left_w, 1)
+        cols.addWidget(right_w, 1)
+
+        def _form(parent) -> QFormLayout:
+            f = QFormLayout(parent)
+            f.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+            f.setLabelAlignment(Qt.AlignLeft)   # 欄內標籤靠左，左緣整齊
+            f.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+            return f
+
+        # 📧 Email（寄件人明文 + App 密碼遮罩 + 測試發信給自己）
+        gb = QGroupBox("📧 Email 發送")
+        fm = _form(gb)
+        # 寄件人 EMAIL_SENDER：非機密 → 直接顯示可編輯明文
+        self.sender_edit = QLineEdit(self.config.email_sender())
+        self.sender_edit.setPlaceholderText("you@gmail.com（會顯示，不是機密）")
+        save_snd = QPushButton("儲存寄件人"); save_snd.clicked.connect(self._save_sender)
+        srow = QWidget(); sl = QHBoxLayout(srow); sl.setContentsMargins(0,0,0,0)
+        sl.addWidget(self.sender_edit); sl.addWidget(save_snd)
+        fm.addRow("寄件人 EMAIL_SENDER", srow)
+        # 機密 Secret（遮罩）
+        self.sec_labels = {}
+        for k in _GLOBAL_SECRETS:
+            row = QWidget(); rl = QHBoxLayout(row); rl.setContentsMargins(0,0,0,0)
+            lbl = QLabel("…"); self.sec_labels[k] = lbl
+            btn = QPushButton("設定/更新"); btn.clicked.connect(lambda _=False, n=k: self._set(n))
+            rl.addWidget(lbl); rl.addStretch(); rl.addWidget(btn)
+            fm.addRow(k, row)
+        # 按鈕用自然寬度（不拉滿）：放 HBox + 右側留白
+        test_btn = QPushButton("測試發信")
+        test_btn.setFixedWidth(120)
+        test_btn.clicked.connect(self._test_email)
+        brow = QWidget(); bl = QHBoxLayout(brow); bl.setContentsMargins(0,0,0,0)
+        bl.addWidget(test_btn); bl.addWidget(QLabel("給自己，無需密碼")); bl.addStretch()
+        fm.addRow(brow)
+        # 狀態 text 窗：較高、不要太寬，自動週期顯示
+        self.email_log = QPlainTextEdit(); self.email_log.setReadOnly(True)
+        self.email_log.setMinimumHeight(140)
+        self.email_log.setMaximumHeight(180)
+        self.email_log.setStyleSheet("font-family:monospace;font-size:11px;")
+        fm.addRow(self.email_log)
+        left.addWidget(gb)
+        left.addStretch()
+
+        # 測試發信輪詢計時器
+        self._poll = QTimer(self)
+        self._poll.setInterval(4000)   # 每 4 秒查一次
+        self._poll.timeout.connect(self._poll_tick)
+        self._poll_secs = 0
+
+        # 🔧 環境 / 登入
+        gb2 = QGroupBox("🔧 環境 / 登入")
+        fe = _form(gb2)
+        self.gh_lbl = QLabel("…"); fe.addRow("gh（GitHub CLI）", self.gh_lbl)
+        fe.addRow("GitHub repo", QLabel(self.repo_slug))
+        mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
+        fe.addRow("存取方式", mode)
+        right.addWidget(gb2)
+        right.addStretch()
+        self.refresh()
+
+    def refresh(self):
+        try:
+            existing = self.gh.list_secret_names(); gh_ok = True
+        except Exception:
+            existing = set(); gh_ok = False
+        for k, lbl in self.sec_labels.items():
+            lbl.setText("✅ 已設" if k in existing else "❌ 未設")
+        ok2, msg2 = probes.probe_gh()
+        self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
+
+    def _set(self, name):
+        dlg = _SetSecretDialog(name, self)
+        if dlg.exec() != QDialog.Accepted or not dlg.v.text():
+            return
+        try:
+            self.gh.set_secret(name, dlg.v.text())
+            self.audit.record("set_secret", name)
+            QMessageBox.information(self, "完成", f"{name} 已設定（不存本機）")
+        except GhError as e:
+            QMessageBox.warning(self, "失敗", str(e))
+        self.refresh()
+
+    def _save_sender(self):
+        v = self.sender_edit.text().strip()
+        self.config.set_email_sender(v)
+        self.audit.record("edit", "EMAIL_SENDER", detail="寄件人")
+        self._log_line(f"✅ 寄件人已存：{v}")
+
+    def _log_line(self, text: str):
+        self.email_log.appendPlainText(text)
+
+    def _test_email(self):
+        # 需求 22：不要密碼。觸發雲端 test_email.yml；之後自動輪詢顯示狀態。
+        try:
+            existing = self.gh.list_secret_names()
+        except Exception:
+            existing = set()
+        if "EMAIL_PASSWORD" not in existing:
+            self._log_line("❌ 尚未設定 EMAIL_PASSWORD，請先按上方「設定/更新」")
+            return
+        self.email_log.clear()
+        ok, msg = probes.trigger_test_email()
+        self.audit.record("test_email", "EMAIL_PASSWORD", "ok" if ok else "fail")
+        if not ok:
+            self._log_line("❌ " + msg); return
+        self._log_line("⏳ 已觸發測試發信，自動追蹤狀態中…")
+        self._poll_secs = 0
+        self._poll.start()
+
+    def _poll_tick(self):
+        self._poll_secs += 4
+        status, conclusion = probes.last_test_email_result()
+        if conclusion == "success":
+            self._poll.stop()
+            self._log_line(f"✅ 正常（{self._poll_secs}s）— 測試信已寄出，請查收信箱")
+        elif conclusion in ("failure", "cancelled", "timed_out"):
+            self._poll.stop()
+            self._log_line(f"❌ 失敗（{conclusion}）— 多半是 App 密碼錯，請重設 EMAIL_PASSWORD")
+        elif self._poll_secs >= 120:
+            self._poll.stop()
+            self._log_line("⚠ 等待逾時（120s），請稍後重試或到 Actions 看 test_email")
+        else:
+            self._log_line(f"⏳ 執行中…（{self._poll_secs}s，狀態 {status or '排隊'}）")
