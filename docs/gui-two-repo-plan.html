@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GUI 配合兩 Repo 架構改造計劃</title>
+<style>
+ body{margin:0;background:#0b1220;color:#e5edf7;font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;line-height:1.7}
+ .w{max-width:1040px;margin:0 auto;padding:32px 20px 90px}
+ h1{font-size:25px;margin:0 0 4px} h2{font-size:20px;margin:30px 0 10px;border-left:4px solid #a855f7;padding-left:10px}
+ h3{font-size:15px;margin:16px 0 6px;color:#cfe3fb} .sub{color:#93a4bd;margin:0 0 18px}
+ table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12.5px}
+ th,td{border:1px solid #22324d;padding:7px 9px;text-align:left;vertical-align:top}
+ th{background:#15233b;color:#cfe3fb} code{background:#0e1a2e;border:1px solid #22324d;border-radius:5px;padding:1px 5px;font-size:12px}
+ pre{background:#0e1a2e;border:1px solid #22324d;border-radius:10px;padding:14px;overflow:auto;font-size:12.5px}
+ .box{border-radius:10px;padding:12px 14px;margin:12px 0;border:1px solid}
+ .bad{background:#2a1416;border-color:#7f1d1d} .good{background:#0e2a1f;border-color:#14532d} .warn{background:#2a2210;border-color:#78510f}
+ .badge{display:inline-block;background:#15233b;border:1px solid #22324d;color:#38bdf8;border-radius:999px;padding:2px 12px;font-size:13px;margin:2px 4px 2px 0}
+ .toc{background:#0e1a2e;border:1px solid #22324d;border-radius:10px;padding:10px 16px;font-size:13.5px}
+ .toc a{color:#7dd3fc;text-decoration:none;margin-right:14px;white-space:nowrap}
+ .new{color:#86efac;font-weight:700} .chg{color:#fbbf24;font-weight:700} .rm{color:#f87171}
+ ul{margin:6px 0;padding-left:20px} li{margin:3px 0}
+</style></head><body><div class="w">
+
+<h1>🖥️ GUI 配合兩 Repo 架構改造計劃</h1>
+<p class="sub">把「建 Repo B、放引擎、設金鑰、跑、切 live」全變成按鈕——讓只懂股票的人也能操作 · 2026-06-04</p>
+<span class="badge">狀態：設計提案</span><span class="badge">目標：使用者只填金鑰</span><span class="badge">向後相容舊 fork 模式</span>
+
+<div class="toc">
+ <a href="#s1">1 背景</a><a href="#s2">2 關鍵衝擊 ★</a><a href="#s3">3 現況→目標</a><a href="#s4">4 核心改動</a>
+ <a href="#s5">5 逐檔影響</a><a href="#s6">6 引擎端配合</a><a href="#s7">7 測試</a><a href="#s8">8 分階段+發版</a>
+</div>
+
+<h2 id="s1">1. 背景</h2>
+<p>GUI（tradingadmin）目前綁<b>舊 fork 模型</b>：精靈幫你 Fork <code>tech-rebalance</code>（整包引擎碼複製進你的 repo）。
+ 但我們已驗證<b>兩 repo 模型</b>：使用者只有一個薄殼 Repo B（<code>accounts.json</code> + <code>data/</code> + 薄 workflow + vendored 引擎 wheel），引擎按版本安裝。
+ GUI 要跟上，否則使用者得手動在 GitHub 點來點去（建 repo、放檔、設金鑰、跑）。</p>
+
+<h2 id="s2">2. 關鍵衝擊：Repo B 不含 strategies/schemas/brokers ★</h2>
+<div class="box bad">兩 repo 模型下，<b>策略 / schema / 券商定義都在引擎 wheel 裡，不在使用者 repo</b>。
+ GUI 現在有幾處<b>直接讀使用者 repo 的這些目錄</b>，在 Repo B 會讀到空 → 必須改資料來源。</div>
+<table><thead><tr><th>GUI 功能</th><th>現在讀哪</th><th>Repo B 會怎樣</th><th>改成</th></tr></thead><tbody>
+ <tr><td>策略下拉選單（catalog.list_strategies）</td><td>repo 的 <code>strategies/</code></td><td class="rm">空（在 wheel 裡）</td><td>讀引擎 <b>manifest</b>（§6）</td></tr>
+ <tr><td>券商下拉（catalog.list_brokers）</td><td>repo 的 <code>brokers/</code></td><td class="rm">空</td><td>讀引擎 manifest</td></tr>
+ <tr><td>必填 Secret 推導（required_secrets）</td><td><code>brokers/{id}.json</code></td><td class="rm">讀不到</td><td>manifest 內附 broker auth</td></tr>
+ <tr><td>schema 漂移橫幅（compat.schema_drift_warning）</td><td>repo 的 <code>schemas/</code></td><td class="rm">空</td><td>讀 <code>vendor/</code> wheel 版本（§4.6）</td></tr>
+ <tr><td>帳戶狀態（state_reader）</td><td>repo 的 <code>data/{id}/</code></td><td class="good">✅ Repo B 有</td><td>不變</td></tr>
+ <tr><td>accounts.json 編輯</td><td>repo 的 <code>accounts.json</code></td><td class="good">✅ Repo B 有</td><td>不變</td></tr>
+</tbody></table>
+
+<h2 id="s3">3. 現況 → 目標（逐功能）</h2>
+<table><thead><tr><th>功能</th><th>現在（fork 模型）</th><th>目標（兩 repo）</th></tr></thead><tbody>
+ <tr><td>建立交易系統</td><td>精靈「一鍵 Fork tech-rebalance」</td><td class="chg">精靈「建立 Repo B」：建 private repo + 放範本 + vendored wheel</td></tr>
+ <tr><td>取得引擎修復</td><td>「⑧ 從上游同步」（git merge-upstream）</td><td class="chg">「更新引擎版本」：抓新 wheel → 換 <code>vendor/</code> + bump <code>daily.yml</code></td></tr>
+ <tr><td>設金鑰</td><td>per-account broker 金鑰</td><td>不變（設 <code>ACC1_ALPACA_KEY/SECRET</code>，免 token）</td></tr>
+ <tr><td>執行</td><td>（無，靠排程）</td><td class="new">按鈕：dry-run / 強制再平衡 / 看 log（觸發 Repo B workflow_dispatch）</td></tr>
+ <tr><td>排程</td><td>編 <code>daily_all_accounts.yml</code> cron</td><td class="chg">開關 Repo B <code>daily.yml</code> 的 cron</td></tr>
+ <tr><td>paper / live</td><td>（無切換）</td><td class="new">environment 切換 + live 防呆確認</td></tr>
+</tbody></table>
+
+<h2 id="s4">4. 核心改動</h2>
+
+<h3>4.1 精靈：「② 建立交易系統（Repo B）」取代 Fork</h3>
+<p>把我手動用 gh 做的流程做成一鍵（純 API）：</p>
+<ul>
+ <li>建 private repo（<code>gh repo create {user}/tech-rebalance-data --private</code>）。</li>
+ <li>放範本檔：<code>accounts.json</code>、<code>data/.gitkeep</code>、薄 <code>daily.yml</code>、<code>README</code>。</li>
+ <li>下載引擎最新 wheel 放進 <code>vendor/</code>（從引擎 Release）。</li>
+ <li>workflow 初始設「手動觸發、dry_run 預設 true」（防呆）。</li>
+</ul>
+<div class="box good">已具備的素材：<code>gh_client</code>（建 repo/設 secret）、<code>repo_store.GhContentsStore</code>（推檔，含巢狀路徑）。新增一支 <code>repo_b_provisioner</code> 服務串起來。</div>
+
+<h3>4.2 引擎版本管理（取代「同步上游」）</h3>
+<ul>
+ <li>顯示目前釘的版本（讀 <code>vendor/*.whl</code> 檔名或 <code>daily.yml</code> 的 <code>@vX</code>）。</li>
+ <li>「更新引擎」按鈕：列出引擎 Release 版本 → 選一個 → 下載 wheel 換掉 <code>vendor/</code> + 改 <code>daily.yml</code> 檔名 + commit。</li>
+ <li>新增服務 <code>engine_release</code>：<code>gh release list/download --repo itemhsu/tech-rebalance</code>。</li>
+</ul>
+
+<h3>4.3 執行按鈕（新）</h3>
+<p>Overview 或新「執行」分頁加按鈕，觸發 Repo B 的 <code>daily.yml</code>（<code>gh workflow run … -f dry_run= -f force=</code>）：</p>
+<ul>
+ <li><b>測試執行（dry-run）</b>：不下單，看選股/計劃。</li>
+ <li><b>強制再平衡</b>：force=true（手動換股；live 時跳確認）。</li>
+ <li><b>看執行紀錄</b>：列 workflow runs + 點開 log（<code>gh run view</code>）。</li>
+</ul>
+
+<h3>4.4 排程開關</h3>
+<p><code>schedule_view</code> 目前硬寫 <code>daily_all_accounts.yml</code>；改成讀 Repo B 的 <code>daily.yml</code>，提供「啟用/停用每日排程」開關（取消/加回 cron 註解）。</p>
+
+<h3>4.5 paper / live 切換 + 防呆</h3>
+<ul>
+ <li>帳戶頁加 <code>environment</code> 切換（paper / live）。</li>
+ <li>切 live 或在 live 下觸發交易 → <b>強制確認對話框</b>（紅字、需打字確認），呼應「真錢由你親手」。</li>
+ <li>可管理「兩個 Repo B」：paper repo 與 live repo（config 存兩個 slug）。</li>
+</ul>
+
+<h3>4.6 drift 橫幅改資料來源</h3>
+<p>現在的 <code>compat.schema_drift_warning</code> 讀 repo 的 <code>schemas/</code>；Repo B 沒有。改成讀 <code>vendor/</code> wheel 的版本，與 App 支援的引擎版本範圍比對（App 內建 <code>ENGINE_SUPPORTED</code> 集合）。</p>
+
+<h2 id="s5">5. 逐檔影響</h2>
+<table><thead><tr><th>檔案</th><th>動作</th><th>內容</th></tr></thead><tbody>
+ <tr><td><code>views/wizard.py</code></td><td class="chg">改</td><td>② Fork → 建 Repo B；⑧ 同步上游 → 更新引擎版本</td></tr>
+ <tr><td><code>services/repo_b_provisioner.py</code></td><td class="new">新增</td><td>建 repo + 推範本 + 放 wheel（一鍵）</td></tr>
+ <tr><td><code>services/engine_release.py</code></td><td class="new">新增</td><td>列/下載引擎 Release wheel、更新 vendor + daily.yml</td></tr>
+ <tr><td><code>services/catalog.py</code></td><td class="chg">改</td><td>策略/券商清單改讀引擎 manifest（非 repo 目錄）</td></tr>
+ <tr><td><code>services/compat.py</code></td><td class="chg">改</td><td>drift 改讀 vendor wheel 版本</td></tr>
+ <tr><td><code>services/workflow_runner.py</code></td><td class="new">新增</td><td><code>gh workflow run/run list/run view</code> 封裝（執行按鈕用）</td></tr>
+ <tr><td><code>views/overview_view.py</code></td><td class="chg">改</td><td>加引擎版本顯示 + 執行按鈕；drift 橫幅來源改</td></tr>
+ <tr><td><code>views/schedule_view.py</code></td><td class="chg">改</td><td>指向 Repo B daily.yml；排程啟用/停用開關</td></tr>
+ <tr><td><code>views/accounts_view.py</code></td><td class="chg">改</td><td>environment 切換；策略下拉來源改 manifest</td></tr>
+ <tr><td><code>models/account.py</code></td><td>不變</td><td>已含 environment 欄位</td></tr>
+ <tr><td><code>services/global_config.py</code></td><td class="chg">改</td><td>存 mode（fork / repo_b）+ paper/live 兩 slug</td></tr>
+</tbody></table>
+
+<h2 id="s6">6. 引擎端配合：發佈 manifest.json</h2>
+<p>GUI 需要「這版引擎有哪些策略/券商」但 Repo B 沒有這些檔。引擎 Release 多附一個 <code>manifest.json</code>：</p>
+<pre>{
+  "engine_version": "1.0.3",
+  "data_schema": "1.0",
+  "strategies": ["top10", "d2p2t6", "mom_6m_t20", ...],
+  "brokers": {
+    "alpaca":  { "required_env": ["{PREFIX}_ALPACA_KEY","{PREFIX}_ALPACA_SECRET"], "environments": ["paper","live"] },
+    "tradier": { "required_env": ["{PREFIX}_API_KEY","{PREFIX}_ACCOUNT_ID"] }
+  }
+}</pre>
+<ul>
+ <li>由引擎 <code>release.yml</code> 自動產生（掃 <code>strategies/</code> + <code>brokers/</code>）並附到 Release。</li>
+ <li>GUI 抓 manifest（<code>gh release download manifest.json</code>）→ 餵下拉選單與必填 secret 推導。</li>
+ <li>順帶讓「策略清單」永遠跟引擎版本一致，不會有 GUI 顯示了引擎沒有的策略。</li>
+</ul>
+
+<h2 id="s7">7. 測試計劃</h2>
+<table><thead><tr><th>測試</th><th>驗證</th></tr></thead><tbody>
+ <tr><td>repo_b_provisioner（mock gh）</td><td>呼叫建 repo + 推 4 檔（含巢狀 daily.yml）+ 放 wheel；不外洩金鑰</td></tr>
+ <tr><td>engine_release（mock gh）</td><td>列版本、下載對的 wheel、正確改 daily.yml 檔名</td></tr>
+ <tr><td>catalog（manifest 來源）</td><td>從 manifest 列策略/券商；repo 無 strategies/ 也能運作</td></tr>
+ <tr><td>compat drift（vendor 來源）</td><td>vendor wheel 版本 vs App 支援 → 正確顯示/隱藏橫幅</td></tr>
+ <tr><td>workflow_runner</td><td>dry-run/force 正確帶參數；live+force → 需確認</td></tr>
+ <tr><td>mode 偵測</td><td>repo 有 runner.py → fork 模式；有 vendor/ + 薄 daily.yml → repo_b 模式</td></tr>
+ <tr><td>GUI 全套件 headless</td><td>offscreen 無回歸</td></tr>
+</tbody></table>
+
+<h2 id="s8">8. 分階段 + 向後相容 + 發版</h2>
+<h3>向後相容（重要）</h3>
+<div class="box warn">你現有的舊系統（<code>itemhsu/tech-rebalance</code> fork 模式、3 個 live 帳戶）<b>還在運作</b>。GUI 不能只支援新模式。
+ → GUI 啟動時<b>偵測模式</b>：repo 有引擎碼（<code>runner.py</code>）= fork 模式（沿用現有 UI）；有 <code>vendor/</code> + 薄 <code>daily.yml</code> = repo_b 模式（新 UI）。兩種並存，逐步遷移。</div>
+<h3>分階段</h3>
+<table><thead><tr><th>階段</th><th>內容</th></tr></thead><tbody>
+ <tr><td>G1</td><td>引擎發 manifest.json（§6）— 地基</td></tr>
+ <tr><td>G2</td><td>新服務：repo_b_provisioner / engine_release / workflow_runner（純邏輯 + mock 測試）</td></tr>
+ <tr><td>G3</td><td>精靈「建立 Repo B」+「更新引擎」（取代 Fork/同步）</td></tr>
+ <tr><td>G4</td><td>catalog/compat 改資料來源；執行按鈕；排程開關；paper/live 切換</td></tr>
+ <tr><td>G5</td><td>mode 偵測 + 兩模式並存；headless 測試；出 <b>DMG v0.2.0</b></td></tr>
+</table>
+<div class="box good"><b>v0.2.0</b>（minor bump 表架構轉換）：完成後，新使用者全程「建 Repo B → 填金鑰 → 按鈕跑」，舊 fork 使用者不受影響。</div>
+
+<h2>一句話</h2>
+<div class="box good">GUI 改造的核心是<b>把資料來源從「使用者 repo 的目錄」換成「引擎 manifest + vendored wheel」</b>，並把建 Repo B / 更新引擎 / 跑 / 切 live 做成按鈕。
+ 最大技術點是 §2（catalog/compat 來源）與 §6（引擎發 manifest）；其餘是把我手動用 gh 做的流程包成服務。向後相容靠 mode 偵測，舊 live 系統不受影響。</div>
+
+</div></body></html>
