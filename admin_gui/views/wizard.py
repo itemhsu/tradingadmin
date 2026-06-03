@@ -77,6 +77,8 @@ class SetupWizard(QDialog):
         self.pages_row = self._step_row(lay, "⑥ 啟用線上儀表板（GitHub Pages）", "啟用", self._do_pages)
         # ⑦ Actions
         self.actions_row = self._step_row(lay, "⑦ 啟用每日自動執行（GitHub Actions）", "啟用", self._do_actions)
+        # ⑧ 從上游同步引擎（拉取修復；經 GitHub Sync fork API，不需 clone）
+        self.sync_row = self._step_row(lay, "⑧ 從上游同步引擎（拉取最新修復）", "同步", self._do_sync_upstream)
 
         refresh_btn = QPushButton("↻ 重新檢查狀態")
         refresh_btn.clicked.connect(self._refresh_status)
@@ -215,6 +217,31 @@ class SetupWizard(QDialog):
         if code != 0:
             QMessageBox.warning(self, "啟用 Actions 失敗", (err or out)[:200])
         self._refresh_status()
+
+    # ── ⑧ 從上游同步引擎（GitHub Sync fork API，不需 clone）─────────────
+    def _do_sync_upstream(self):
+        slug = self._managed_slug()
+        if not slug:
+            QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
+        if QMessageBox.question(
+                self, "從上游同步引擎",
+                f"將把上游最新修復合併進你的 {slug}（預設分支 main）。\n"
+                "你的 accounts.json / 帳戶資料不會被改動。要繼續嗎？"
+        ) != QMessageBox.Yes:
+            return
+        # GitHub「Sync fork」：POST /repos/{slug}/merge-upstream
+        code, out, err = _gh(["api", "-X", "POST", f"repos/{slug}/merge-upstream",
+                             "-f", "branch=main"])
+        blob = (err + out).lower()
+        if code == 0:
+            QMessageBox.information(self, "同步完成",
+                "已從上游拉取最新修復。若有更新，下次自動執行即套用。")
+        elif "409" in blob or "conflict" in blob or "diverg" in blob:
+            QMessageBox.warning(self, "需手動處理",
+                "你的 fork 與上游分歧，無法自動快轉合併。\n"
+                "請在本機執行 scripts/sync_upstream.sh，或在 GitHub 開 PR 解決。")
+        else:
+            QMessageBox.warning(self, "同步失敗", (err or out)[:200])
 
     # ── 完成 ──────────────────────────────────────────────────────────
     def _finish(self):
