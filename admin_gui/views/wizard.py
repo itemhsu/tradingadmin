@@ -22,6 +22,8 @@ from admin_gui.services.global_config import GlobalConfig
 # 內部常數：範本與倉庫名不顯示給使用者
 _TEMPLATE = "itemhsu/tech-rebalance"
 _REPO_NAME = _TEMPLATE.split("/")[-1]
+# 線上儀表板（Pages）在「另一個 public repo」，不是引擎 repo
+_DASHBOARD_REPO = "tech-rebalance-dashboard"
 
 
 def is_first_run(config: GlobalConfig) -> bool:
@@ -113,6 +115,11 @@ class SetupWizard(QDialog):
         u = self.user_edit.text().strip()
         return f"{u}/{_REPO_NAME}" if u else ""
 
+    def _dashboard_slug(self) -> str:
+        """線上儀表板的 repo（public，Pages 在這裡，不是引擎 repo）。"""
+        u = self.user_edit.text().strip()
+        return f"{u}/{_DASHBOARD_REPO}" if u else ""
+
     # ── ① gh 登入 ─────────────────────────────────────────────────────
     def _refresh_gh(self):
         ok, msg = probe_gh()
@@ -150,8 +157,9 @@ class SetupWizard(QDialog):
         # ② Fork：repo 是否已存在
         code, _, _ = _gh(["api", f"repos/{slug}", "--jq", ".full_name"])
         self._set_done(self.fork_row, code == 0, "已有（私有）")
-        # ⑥ Pages
-        code, _, _ = _gh(["api", f"repos/{slug}/pages"])
+        # ⑥ Pages —— 檢查「儀表板 repo」（非引擎 repo）
+        dash = self._dashboard_slug()
+        code, _, _ = _gh(["api", f"repos/{dash}/pages"]) if dash else (1, "", "")
         self._set_done(self.pages_row, code == 0, "已啟用")
         # ⑦ Actions
         code, out, _ = _gh(["api", f"repos/{slug}/actions/permissions", "--jq", ".enabled"])
@@ -178,13 +186,19 @@ class SetupWizard(QDialog):
                 f"請到 GitHub 將 {slug} 設為 Private（含真錢設定）。")
         self._refresh_status()
 
-    # ── ⑥ 啟用 Pages（冪等）─────────────────────────────────────────────
+    # ── ⑥ 啟用 Pages（在儀表板 repo，冪等）──────────────────────────────
     def _do_pages(self):
-        slug = self._managed_slug()
-        if not slug:
+        dash = self._dashboard_slug()
+        if not dash:
             QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
+        # 儀表板 repo 不存在時提示（需先有 *-dashboard repo）
+        if _gh(["api", f"repos/{dash}", "--jq", ".name"])[0] != 0:
+            QMessageBox.warning(self, "找不到儀表板 repo",
+                f"{dash} 不存在。線上儀表板需要這個 public repo；"
+                f"請先建立/取得後再啟用 Pages。")
+            return
         payload = json.dumps({"source": {"branch": "main", "path": "/"}})
-        code, out, err = _gh(["api", "-X", "POST", f"repos/{slug}/pages",
+        code, out, err = _gh(["api", "-X", "POST", f"repos/{dash}/pages",
                              "--input", "-"], inp=payload)
         blob = (err + out).lower()
         if code != 0 and "409" not in blob and "already" not in blob:
