@@ -8,10 +8,45 @@ SUPPORTED_SCHEMA_VERSION。三者須一致；本 App 支援集合在此宣告。
 """
 from __future__ import annotations
 
-from typing import Optional
+import re
+from typing import List, Optional, Set
 
 # 本 App 支援的 data.json schema 版本（引擎 data_writer.SCHEMA_VERSION 的相容集合）
 GUI_SUPPORTED_DATA_SCHEMA = {"1.0"}
+
+# 本 App 支援的 data-schema 主版本（對應引擎 schemas/data-schema-v{N}.json）
+GUI_SUPPORTED_DATA_SCHEMA_MAJORS: Set[int] = {1}
+
+_DATA_SCHEMA_RE = re.compile(r"^data-schema-v(\d+)\.json$")
+
+
+def parse_data_schema_majors(filenames: List[str]) -> Set[int]:
+    """從 schemas/ 目錄檔名取出 data-schema 的主版本集合。"""
+    out: Set[int] = set()
+    for name in filenames or []:
+        m = _DATA_SCHEMA_RE.match(name.strip())
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def schema_drift_warning(schema_filenames: List[str]) -> Optional[str]:
+    """比對「fork 引擎的 data-schema 主版本」與本 App 支援範圍，回傳警告或 None。
+
+    schema_filenames：fork repo `schemas/` 目錄的檔名清單（GUI 經 API 取得）。
+    """
+    majors = parse_data_schema_majors(schema_filenames)
+    if not majors:
+        return None                                   # 讀不到→不警告，交其他流程
+    engine_major = max(majors)
+    hi, lo = max(GUI_SUPPORTED_DATA_SCHEMA_MAJORS), min(GUI_SUPPORTED_DATA_SCHEMA_MAJORS)
+    if engine_major > hi:
+        return (f"引擎的報告格式為 v{engine_major}，比本 App 支援的 v{hi} 新。"
+                "請下載最新版 App（DMG）以正確顯示。")
+    if engine_major < lo:
+        return (f"引擎的報告格式為 v{engine_major}，比本 App 支援的 v{lo} 舊。"
+                "建議從上游同步引擎（scripts/sync_upstream.sh）。")
+    return None
 
 
 def data_schema_warning(version: Optional[str]) -> Optional[str]:

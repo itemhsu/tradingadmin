@@ -59,9 +59,20 @@ class OverviewView(QWidget):
         self.audit = AuditLog()
         self.config = GlobalConfig()
 
+        # 最外層：頂部相容性警告橫幅（預設隱藏）+ 下方兩欄內容。
+        outer = QVBoxLayout(self)
+        self.drift_banner = QLabel("")
+        self.drift_banner.setWordWrap(True)
+        self.drift_banner.setVisible(False)
+        self.drift_banner.setStyleSheet(
+            "background:#7f1d1d;color:#fecaca;padding:8px 12px;border-radius:6px;"
+            "font-size:12px;")
+        outer.addWidget(self.drift_banner)
+
         # 兩欄佈局：左欄=Email 發送，右欄=環境/登入＋全域日誌；
         # 兩欄各佔一半、平均使用視窗寬度，右側不再留白。
-        cols = QHBoxLayout(self)
+        cols_w = QWidget(); cols = QHBoxLayout(cols_w); cols.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(cols_w)
         left_w = QWidget(); left = QVBoxLayout(left_w); left.setContentsMargins(0, 0, 0, 0)
         right_w = QWidget(); right = QVBoxLayout(right_w); right.setContentsMargins(0, 0, 0, 0)
         cols.addWidget(left_w, 1)
@@ -171,6 +182,24 @@ class OverviewView(QWidget):
             self.user_lbl.setText("（未登入）")
             self.mvp_lbl.setText("（登入後顯示）")
             self.dash_lbl.setText("（登入後顯示）")
+
+        self._refresh_drift_banner()
+
+    def _refresh_drift_banner(self):
+        """偵測 fork 引擎的 data-schema 版本是否與本 App 支援範圍錯位（fork 相容性 §6.1 ⑨）。"""
+        from admin_gui.services import compat
+        from admin_gui.services.repo_store import make_store
+        warning = None
+        try:
+            files = make_store(self.repo_slug).list_dir("schemas")
+            warning = compat.schema_drift_warning(files)
+        except Exception:
+            warning = None      # 讀不到（網路/權限）→ 不顯示，不打擾
+        if warning:
+            self.drift_banner.setText("⚠️ " + warning)
+            self.drift_banner.setVisible(True)
+        else:
+            self.drift_banner.setVisible(False)
 
     def _set(self, name):
         dlg = _SetSecretDialog(name, self)

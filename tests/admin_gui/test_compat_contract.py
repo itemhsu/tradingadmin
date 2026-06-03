@@ -112,3 +112,37 @@ def test_version_warning_none_when_compatible():
 def test_version_warning_present_when_skewed():
     w = data_schema_warning("2.0")
     assert w and "2.0" in w and "1.0" in w
+
+
+# ── schema 漂移偵測（從 fork schemas/ 檔名）────────────────────────────────────
+def test_parse_data_schema_majors():
+    from admin_gui.services.compat import parse_data_schema_majors
+    files = ["data-schema-v1.json", "data-schema-v2.json",
+             "broker-schema-v1.json", "accounts-schema-v1.json", "README.md"]
+    assert parse_data_schema_majors(files) == {1, 2}
+
+
+def test_schema_drift_none_when_supported():
+    from admin_gui.services.compat import schema_drift_warning
+    assert schema_drift_warning(["data-schema-v1.json", "accounts-schema-v1.json"]) is None
+    assert schema_drift_warning([]) is None            # 讀不到→不警告
+
+
+def test_schema_drift_warns_when_engine_newer():
+    from admin_gui.services.compat import schema_drift_warning
+    w = schema_drift_warning(["data-schema-v1.json", "data-schema-v2.json"])
+    assert w and "v2" in w and "DMG" in w              # 引擎較新→提示更新 App
+
+
+def test_schema_drift_warns_when_engine_older():
+    from admin_gui.services.compat import (
+        schema_drift_warning, GUI_SUPPORTED_DATA_SCHEMA_MAJORS)
+    # 模擬 App 只支援 v2+，但 fork 引擎還是 v1
+    import admin_gui.services.compat as c
+    orig = set(GUI_SUPPORTED_DATA_SCHEMA_MAJORS)
+    c.GUI_SUPPORTED_DATA_SCHEMA_MAJORS = {2}
+    try:
+        w = schema_drift_warning(["data-schema-v1.json"])
+        assert w and "v1" in w and "同步" in w
+    finally:
+        c.GUI_SUPPORTED_DATA_SCHEMA_MAJORS = orig
