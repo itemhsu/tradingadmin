@@ -40,15 +40,41 @@ def dashboard_mvp_url(login: str, account: str = "1") -> str:
     return f"{_dashboard_host(login)}/mvp_dashboard.html?a={account}"
 
 
+_EMAIL_PASS_HELP = """<b>Gmail App 密碼（16 碼）取得步驟：</b><br>
+1. 前往 <a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a><br>
+2. 登入你要用來寄信的 Gmail 帳號<br>
+3. 「選擇應用程式」→ 其他 → 輸入名稱（如 TradingBot）<br>
+4. 點「產生」→ 複製那 16 個字母（中間的空格不用複製）<br>
+5. 貼到下方輸入框<br><br>
+<small>⚠ 需先在 Gmail 啟用「兩步驟驗證」才能使用 App 密碼。<br>
+如果你用的是 SendGrid，這裡填 SendGrid API Key。</small>"""
+
+
 class _SetSecretDialog(QDialog):
     def __init__(self, name, parent=None):
+        import webbrowser
         super().__init__(parent); self.setWindowTitle(f"設定 {name}")
-        f = QFormLayout(self)
+        v_layout = QVBoxLayout(self)
+
+        # EMAIL_PASSWORD 特別加說明
+        if name == "EMAIL_PASSWORD":
+            help_lbl = QLabel(_EMAIL_PASS_HELP)
+            help_lbl.setOpenExternalLinks(True)
+            help_lbl.setWordWrap(True)
+            help_lbl.setStyleSheet("background:#f0f9ff;border:1px solid #bae6fd;"
+                                   "border-radius:6px;padding:10px;font-size:12px;")
+            v_layout.addWidget(help_lbl)
+
+        f = QFormLayout()
         self.v = QLineEdit(); self.v.setEchoMode(QLineEdit.Password)
-        f.addRow(f"{name} 的值", self.v)
+        self.v.setMinimumWidth(280)
+        f.addRow(f"{name}：", self.v)
         f.addRow(QLabel("⚠ 經 gh 寫入 GitHub Secrets，不存本機檔。"))
+        v_layout.addLayout(f)
         b = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        b.accepted.connect(self.accept); b.rejected.connect(self.reject); f.addRow(b)
+        b.accepted.connect(self.accept); b.rejected.connect(self.reject)
+        v_layout.addWidget(b)
+        self.resize(420, 10)          # 寬一點，說明文字不換行太多
 
 
 class OverviewView(QWidget):
