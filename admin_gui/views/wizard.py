@@ -298,6 +298,11 @@ class SetupWizard(QDialog):
                     raw_bytes = _b64.b64decode(content_b64.replace("\n", ""))
                     _put_file(fpath, raw_bytes, f"init: seed {fpath} from template")
 
+            # 空的 accounts.json（dashboard 初次載入不會 404；每日 workflow 執行後覆蓋）
+            _put_file("accounts.json",
+                      b'{"accounts":[]}',
+                      "init: placeholder accounts.json")
+
             # 啟用 GitHub Pages（main 分支根目錄）
             pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
             cp, _, ep = _gh(["api", "-X", "POST",

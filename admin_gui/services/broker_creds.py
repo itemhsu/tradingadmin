@@ -13,10 +13,20 @@ from typing import Dict, List, Tuple
 
 
 def _plain_keys(spec: dict) -> List[str]:
-    """required_env 去掉 {PREFIX}_ 後的名稱，如 API_KEY / API_SECRET / ACCOUNT_ID。"""
-    auth = (spec or {}).get("auth", {}) or {}
+    """required_env 去掉 {PREFIX}_ 後的名稱，如 API_KEY / API_SECRET / ACCOUNT_ID。
+
+    支援兩種 spec 格式：
+      - 檔案格式（brokers/alpaca.json）：{"auth": {"required_env": [...], "method": "..."}}
+      - manifest 格式（pub engine manifest.json）：{"required_env": [...], "environments": [...]}
+    """
+    spec = spec or {}
+    # 檔案格式：required_env 在 auth 子物件
+    auth_env = (spec.get("auth") or {}).get("required_env") or []
+    # manifest 格式：required_env 在頂層
+    flat_env = spec.get("required_env") or []
+    env_list = auth_env or flat_env
     out = []
-    for tpl in auth.get("required_env", []) or []:
+    for tpl in env_list:
         out.append(tpl.replace("{PREFIX}_", "").replace("{PREFIX}", ""))
     return out
 
@@ -65,9 +75,12 @@ def secret_writes(broker_id: str, spec: dict, prefix: str,
             out[f"{prefix}_ALPACA_SECRET"] = values["API_SECRET"]
         return out
 
-    auth = (spec or {}).get("auth", {}) or {}
+    spec = spec or {}
+    auth_env = (spec.get("auth") or {}).get("required_env") or []
+    flat_env = spec.get("required_env") or []
+    env_list = auth_env or flat_env
     out = {}
-    for tpl in auth.get("required_env", []) or []:
+    for tpl in env_list:
         name = tpl.replace("{PREFIX}", prefix)
         key = tpl.replace("{PREFIX}_", "").replace("{PREFIX}", "")
         if values.get(key):

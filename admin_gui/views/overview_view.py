@@ -284,7 +284,7 @@ class OverviewView(QWidget):
             self._log_line("❌ 尚未設定 EMAIL_PASSWORD，請先按上方「設定/更新」")
             return
         self.email_log.clear()
-        ok, msg = probes.trigger_test_email()
+        ok, msg = probes.trigger_test_email(repo=self.repo_slug)
         self.audit.record("test_email", "EMAIL_PASSWORD", "ok" if ok else "fail")
         if not ok:
             self._log_line("❌ " + msg); return
@@ -294,7 +294,7 @@ class OverviewView(QWidget):
 
     def _poll_tick(self):
         self._poll_secs += 4
-        status, conclusion = probes.last_test_email_result()
+        status, conclusion = probes.last_test_email_result(repo=self.repo_slug)
         if conclusion == "success":
             self._poll.stop()
             self._log_line(f"✅ 正常（{self._poll_secs}s）— 測試信已寄出，請查收信箱")
