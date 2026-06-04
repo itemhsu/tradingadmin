@@ -153,24 +153,34 @@ class SetupWizard(QDialog):
         exists = (code == 0)
         self._set_done(self.repob_row, exists, "已建立（私有）")
         # 更新引擎：讀 Repo B 的 daily.yml 現釘版本 vs 公開引擎最新版
-        if exists:
-            c2, content, _ = _gh(["api",
-                f"repos/{repob}/contents/.github/workflows/daily.yml", "--jq", ".content"])
-            pinned = None
-            if c2 == 0 and content:
-                import base64 as _b64
-                try:
-                    pinned = er.pinned_git_version(_b64.b64decode(content).decode("utf-8"))
-                except Exception:  # noqa: BLE001
-                    pinned = None
-            versions = er.list_versions(_ENGINE_REPO)
-            latest = versions[0] if versions else None
-            up_to_date = bool(pinned and latest and pinned.lstrip("v") == latest.lstrip("v"))
-            note = (f"已是最新 {pinned}" if up_to_date
-                    else (f"可更新 {pinned}→{latest}" if pinned and latest else ""))
-            self._set_done(self.engine_row, up_to_date, note)
-        else:
+        if not exists:
             self._set_done(self.engine_row, False, "")
+            self.engine_row["status"].setText("（先建立交易系統）")
+            return
+        c2, content, _ = _gh(["api",
+            f"repos/{repob}/contents/.github/workflows/daily.yml", "--jq", ".content"])
+        pinned = None
+        if c2 == 0 and content:
+            import base64 as _b64
+            try:
+                pinned = er.pinned_git_version(_b64.b64decode(content).decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                pinned = None
+        versions = er.list_versions(_ENGINE_REPO)
+        latest = versions[0] if versions else None
+        up_to_date = bool(pinned and latest and pinned.lstrip("v") == latest.lstrip("v"))
+        # note 永不空白：四種情況都給明確說明
+        if up_to_date:
+            note = f"已是最新 {pinned}"
+        elif pinned and latest:
+            note = f"可更新 {pinned}→{latest}"
+        elif not pinned:
+            note = "未用 git+ 釘版，按「更新」切換為公開引擎"
+        else:  # pinned 有、latest 取不到
+            note = f"目前 {pinned}（取不到最新版）"
+        self._set_done(self.engine_row, up_to_date, note)
+        # 「更新引擎」這列：未完成也要顯示狀態（_set_done 預設會清空）
+        self.engine_row["status"].setText(note)
 
     # ── 建立 Repo B（兩 repo 薄殼）───────────────────────────────────────
     def _do_build_repob(self):

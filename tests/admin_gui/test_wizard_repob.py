@@ -111,3 +111,54 @@ def test_update_engine_bumps_git_pin(qapp, monkeypatch, tmp_path):
     pushed = base64.b64decode(__import__("json").loads(inp)["content"]).decode()
     assert "tech-rebalance-pub@v1.0.6" in pushed
     assert "v1.0.5" not in pushed
+
+
+def _b64yml(text: str) -> str:
+    return base64.b64encode(text.encode()).decode()
+
+
+def test_refresh_engine_row_status_never_blank_when_not_uptodate(qapp, monkeypatch, tmp_path):
+    """回歸：未完成的『更新引擎』列必須顯示狀態文字（曾被 _set_done 清空成空白）。"""
+    wz, w, _ = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("alice")
+    from admin_gui.services import engine_release as er
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
+
+    daily = ('run: pip install "tech-rebalance @ '
+             'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.4"')
+
+    def fake_gh(args, inp=None, **k):
+        joined = " ".join(args)
+        if joined.endswith("--jq .full_name") or "repos/alice/tech-rebalance-data --jq" in joined:
+            return (0, "alice/tech-rebalance-data", "")
+        if "daily.yml" in joined and ".content" in joined:
+            return (0, _b64yml(daily), "")
+        return (0, "", "")
+    monkeypatch.setattr(wz, "_gh", fake_gh)
+
+    w._refresh_status()
+    assert w.repob_row["status"].text() == "已建立（私有）"
+    note = w.engine_row["status"].text()
+    assert note and "v1.0.4" in note and "v1.0.6" in note      # 可更新 v1.0.4→v1.0.6
+
+
+def test_refresh_engine_row_note_when_no_git_pin(qapp, monkeypatch, tmp_path):
+    """舊式 vendored wheel 的 daily.yml（無 git+ 釘版）→ 給明確指引，不空白。"""
+    wz, w, _ = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("alice")
+    from admin_gui.services import engine_release as er
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
+    legacy = "run: pip install vendor/tech_rebalance-1.0.3-py3-none-any.whl"
+
+    def fake_gh(args, inp=None, **k):
+        joined = " ".join(args)
+        if "repos/alice/tech-rebalance-data --jq" in joined:
+            return (0, "alice/tech-rebalance-data", "")
+        if "daily.yml" in joined and ".content" in joined:
+            return (0, _b64yml(legacy), "")
+        return (0, "", "")
+    monkeypatch.setattr(wz, "_gh", fake_gh)
+
+    w._refresh_status()
+    note = w.engine_row["status"].text()
+    assert note and "git+" in note                              # 明確提示切換
