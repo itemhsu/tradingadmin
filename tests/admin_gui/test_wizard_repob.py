@@ -43,43 +43,46 @@ def test_only_two_repo_steps_remain(qapp, monkeypatch, tmp_path):
         assert not hasattr(w, fn)
 
 
-def test_build_repob_calls_provision(qapp, monkeypatch, tmp_path):
+def test_build_repob_runs_sync(qapp, monkeypatch, tmp_path):
+    """建立 = repo create + repo_sync.sync（repo_b 與 dashboard 各一次）。"""
     wz, w, cfg = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("alice")
     _yes(monkeypatch)
     from admin_gui.services import engine_release as er
-    from admin_gui.services import repo_b_provisioner as pv
-    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6", "v1.0.5"])
-    captured = {}
-    monkeypatch.setattr(pv, "provision",
-                        lambda slug, files, **k: captured.update(slug=slug, files=files) or {"ok": True})
+    from admin_gui.services import repo_sync as rs
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
+    monkeypatch.setattr(wz, "_gh", lambda args, inp=None, **k: (1, "", ""))  # repo 都不存在
+    synced = []
+    monkeypatch.setattr(rs, "sync",
+                        lambda section, slug, ver, **k: synced.append((section, slug, ver)) or {})
     w._do_build_repob()
-    assert captured["slug"] == "alice/tech-rebalance"
-    assert ".github/workflows/daily.yml" in captured["files"]
-    # git+ 安裝公開引擎：不再 vendor wheel
-    assert not any(p.startswith("vendor/") for p in captured["files"])
-    daily = captured["files"][".github/workflows/daily.yml"].decode("utf-8")
-    assert "git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6" in daily
-    assert cfg.get("repob_slug") == "alice/tech-rebalance"   # 記住 Repo B
+    assert ("repo_b", "alice/tech-rebalance", "v1.0.6") in synced
+    assert ("dashboard", "alice/tech-rebalance-dashboard", "v1.0.6") in synced
+    assert cfg.get("repob_slug") == "alice/tech-rebalance"
 
 
 def test_build_repob_aborts_when_declined(qapp, monkeypatch, tmp_path):
     wz, w, _ = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("alice")
     from PySide6.QtWidgets import QMessageBox
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
-    from admin_gui.services import repo_b_provisioner as pv
+    monkeypatch.setattr(wz, "_gh", lambda args, inp=None, **k: (1, "", ""))
+    from admin_gui.services import repo_sync as rs
     called = {"n": 0}
-    monkeypatch.setattr(pv, "provision", lambda *a, **k: called.update(n=called["n"] + 1))
+    monkeypatch.setattr(rs, "sync", lambda *a, **k: called.update(n=called["n"] + 1))
     w._do_build_repob()
-    assert called["n"] == 0       # 使用者拒絕 → 不建
+    assert called["n"] == 0       # 使用者拒絕 → 不動
 
 
 def test_build_repob_no_versions_warns(qapp, monkeypatch, tmp_path):
     wz, w, _ = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("alice")
     _yes(monkeypatch)
-    from admin_gui.services import engine_release as er, repo_b_provisioner as pv
+    from admin_gui.services import engine_release as er, repo_sync as rs
     monkeypatch.setattr(er, "list_versions", lambda repo: [])
+    monkeypatch.setattr(wz, "_gh", lambda args, inp=None, **k: (1, "", ""))
     called = {"n": 0}
-    monkeypatch.setattr(pv, "provision", lambda *a, **k: called.update(n=called["n"] + 1))
+    monkeypatch.setattr(rs, "sync", lambda *a, **k: called.update(n=called["n"] + 1))
     w._do_build_repob()
     assert called["n"] == 0       # 列不到版本 → 不繼續
 
@@ -221,3 +224,27 @@ def test_refresh_finds_git_pin_in_daily_all_accounts_yml(qapp, monkeypatch, tmp_
     w._refresh_status()
     note = w.engine_row["status"].text()
     assert "v1.0.6" in note and "已是最新" in note   # 找到 pin，且已是最新
+
+
+def test_c13_build_button_never_greys_when_repos_exist(qapp, monkeypatch, tmp_path):
+    """綠燈卡死解法：兩個 repo 都存在 → 建立按鈕仍可按、文字變「🔧 修復」。"""
+    wz, w, _ = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("alice")
+    from admin_gui.services import engine_release as er
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
+    # 兩個 repo 都存在；workflow 也已 git+ 釘最新
+    daily = ('pip install "tech-rebalance @ '
+             'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6"')
+    def fake_gh(args, inp=None, **k):
+        joined = " ".join(args)
+        if joined.endswith("--jq .full_name"):
+            return (0, "alice/x", "")                      # 任何 repo 都存在
+        if "[.[].name]" in joined:
+            return (0, '["daily.yml"]', "")
+        if "daily.yml" in joined and ".content" in joined:
+            return (0, base64.b64encode(daily.encode()).decode(), "")
+        return (0, "", "")
+    monkeypatch.setattr(wz, "_gh", fake_gh)
+    w._refresh_status()
+    assert w.repob_row["btn"].isEnabled() is True           # 不變灰
+    assert w.repob_row["btn"].text() == "🔧 修復"

@@ -176,6 +176,9 @@ class SetupWizard(QDialog):
         else:
             note = ""
         self._set_done(self.repob_row, both_ok, note)
+        # 綠燈卡死解法：建立列按鈕永不變灰。repo 存在 → 變「🔧 修復」（仍可按、冪等）
+        self.repob_row["btn"].setEnabled(True)
+        self.repob_row["btn"].setText("🔧 修復" if both_ok else self.repob_row["action"])
         exists = repob_ok   # 引擎檢查只需要 Repo B
         # 更新引擎：掃 Repo B 的所有 workflow 檔，找到 git+ pin 即可
         # （workflow 名稱不固定：daily.yml / daily_all_accounts.yml 等都接受）
@@ -224,24 +227,27 @@ class SetupWizard(QDialog):
         # 「更新引擎」這列：未完成也要顯示狀態（_set_done 預設會清空）
         self.engine_row["status"].setText(note)
 
-    # ── 建立 Repo B + Dashboard（一次兩個，已存在略過）───────────────────
+    # ── 建立 / 修復 交易系統（manifest 驅動，冪等）───────────────────────
     def _do_build_repob(self):
         import base64 as _b64, json as _json
         from admin_gui.services import engine_release as er
         from admin_gui.services import repo_b_provisioner as pv
+        from admin_gui.services import repo_sync as rs
 
         u = self.user_edit.text().strip()
         if not u:
             QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
-        slug  = self._repob_slug()                         # {user}/tech-rebalance
-        dash  = f"{u}/tech-rebalance-dashboard"            # {user}/tech-rebalance-dashboard
+        slug = self._repob_slug()                          # {user}/tech-rebalance
+        dash = f"{u}/tech-rebalance-dashboard"
 
+        repob_exists = (_gh(["api", f"repos/{slug}", "--jq", ".full_name"])[0] == 0)
+        verb = "修復" if repob_exists else "建立"
         if QMessageBox.question(
-                self, "建立交易系統",
-                f"將建立：\n"
-                f"  • {slug}（private，薄殼 Repo B）\n"
-                f"  • {dash}（public，GitHub Pages Dashboard）\n"
-                "已存在的 repo 會略過。要繼續嗎？"
+                self, f"{verb}交易系統",
+                f"將{verb}：\n  • {slug}（private，薄殼 Repo B）\n"
+                f"  • {dash}（public，Dashboard）\n"
+                "冪等：缺的檔補上、引擎 workflow 更新到最新；你的 accounts.json / 資料不會被動。\n"
+                "要繼續嗎？"
         ) != QMessageBox.Yes:
             return
 
@@ -251,77 +257,38 @@ class SetupWizard(QDialog):
                                 "無法列出公開引擎 Release，請確認 gh 已登入。"); return
         latest = versions[0]
 
-        # ── ① 建 Repo B（薄殼，private）──────────────────────────────
-        files = pv.build_template_files(latest)
-        res = pv.provision(slug, files)
-        repob_ok = res["ok"]
-        if repob_ok:
-            self.config.set("repob_slug", slug)
+        # ── ① Repo B：建 repo（已存在略過）+ 初始 accounts.json（缺才補）+ sync ──
+        _gh(["repo", "create", slug, "--private"])         # exists → 無害失敗
+        if _gh(["api", f"repos/{slug}/contents/accounts.json", "--jq", ".sha"])[0] != 0:
+            init_files = pv.build_template_files(latest)    # 取初始 accounts.json
+            acc = init_files.get("accounts.json")
+            if acc:
+                _gh(["api", "-X", "PUT", f"repos/{slug}/contents/accounts.json", "--input", "-"],
+                    inp=_json.dumps({"message": "init accounts.json",
+                                     "content": _b64.b64encode(acc).decode()}))
+        rs.sync("repo_b", slug, latest, gh=_gh)             # daily.yml + test_email.yml + data/.gitkeep
+        self.config.set("repob_slug", slug)
 
-        # ── ② 建 Dashboard repo（public，GitHub Pages）+ 複製模板 ──────
-        dash_ok = False
-        dash_msg = ""
-        TEMPLATE_REPO = "itemhsu/tech-rebalance-dashboard"
-        # 需要複製的檔案（從 template repo 複製到用戶 dashboard repo）
-        SEED_FILES = [
-            "mvp_dashboard.html",          # 個人 NAV 看板
-            ".nojekyll",                   # GitHub Pages 不用 Jekyll
-            "momentum/index.html",         # 回測分析 SPA（讀 pub engine results/）
-        ]
-        INDEX_HTML = (
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<title>{u} Trading Dashboard</title>"
-            "<meta http-equiv='refresh' content='0;url=mvp_dashboard.html'>"
-            "</head><body><a href='mvp_dashboard.html'>前往 Dashboard</a></body></html>"
-        )
-        # 建 repo（已存在 → 繼續）
-        rc = _gh(["repo", "create", dash, "--public"])[0]
-        dash_existed = (rc != 0)
-        if rc == 0 or dash_existed:
-            # index.html：redirect 到 mvp_dashboard.html
-            def _put_file(path, content_bytes, msg):
-                cs, sha_raw, _ = _gh(["api", f"repos/{dash}/contents/{path}", "--jq", ".sha"])
-                p = {"message": msg, "content": _b64.b64encode(content_bytes).decode()}
-                if cs == 0 and sha_raw.strip():
-                    p["sha"] = sha_raw.strip()
-                _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{path}", "--input", "-"],
-                    inp=_json.dumps(p))
+        # ── ② Dashboard：建 repo + 共用 viewer 複製（ensure）+ sync placeholders ──
+        _gh(["repo", "create", dash, "--public"])
+        TEMPLATE = "itemhsu/tech-rebalance-dashboard"
+        for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
+            if _gh(["api", f"repos/{dash}/contents/{fpath}", "--jq", ".sha"])[0] != 0:
+                cr, c64, _ = _gh(["api", f"repos/{TEMPLATE}/contents/{fpath}", "--jq", ".content"])
+                if cr == 0 and c64.strip():
+                    _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{fpath}", "--input", "-"],
+                        inp=_json.dumps({"message": f"seed {fpath}",
+                                         "content": c64.replace("\n", "")}))
+        rs.sync("dashboard", dash, latest, gh=_gh)          # .nojekyll + index.html + accounts.json
+        pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
+        cp, _, ep = _gh(["api", "-X", "POST", f"repos/{dash}/pages", "--input", "-"],
+                        inp=pages_payload)
+        dash_ok = cp == 0 or "already" in ep.lower() or "409" in ep
 
-            _put_file("index.html", INDEX_HTML.encode(), "init: dashboard index")
-            _put_file(".nojekyll", b"", "init: disable jekyll")
-
-            # 從 template repo 複製核心 HTML 檔案
-            for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
-                cr, content_b64, _ = _gh(["api",
-                    f"repos/{TEMPLATE_REPO}/contents/{fpath}", "--jq", ".content"])
-                if cr == 0 and content_b64.strip():
-                    raw_bytes = _b64.b64decode(content_b64.replace("\n", ""))
-                    _put_file(fpath, raw_bytes, f"init: seed {fpath} from template")
-
-            # 空的 accounts.json（dashboard 初次載入不會 404；每日 workflow 執行後覆蓋）
-            _put_file("accounts.json",
-                      b'{"accounts":[]}',
-                      "init: placeholder accounts.json")
-
-            # 啟用 GitHub Pages（main 分支根目錄）
-            pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
-            cp, _, ep = _gh(["api", "-X", "POST",
-                             f"repos/{dash}/pages", "--input", "-"],
-                            inp=pages_payload)
-            dash_ok = cp == 0 or "already" in ep.lower() or "409" in ep
-            dash_msg = "已啟用" if dash_ok else f"Pages 啟用失敗（{ep[:60]}）"
-        else:
-            dash_msg = "建立失敗"
-
-        # ── 結果摘要 ──────────────────────────────────────────────────
-        repob_status = "✅ 已建立" if repob_ok else "⚠ 部分失敗（見下方）"
-        dash_status  = f"✅ {dash_msg}" if dash_ok else f"⚠ {dash_msg}"
-        QMessageBox.information(self, "建立完成",
-            f"Repo B：{repob_status}\n"
-            f"Dashboard：{dash_status}\n\n"
-            f"下一步：\n"
-            f"1. 到 {slug} Settings → Secrets 設 Alpaca 金鑰\n"
-            f"2. Dashboard URL：https://{u}.github.io/tech-rebalance-dashboard/")
+        QMessageBox.information(self, f"{verb}完成",
+            f"Repo B：✅\nDashboard：{'✅ 已啟用' if dash_ok else '⚠ Pages 需手動啟用'}\n\n"
+            f"下一步：\n1. 到 {slug} Settings → Secrets 設 Alpaca 金鑰\n"
+            f"2. Dashboard：https://{u}.github.io/tech-rebalance-dashboard/")
         self._refresh_status()
 
     # ── 更新引擎版本 ─────────────────────────────────────────────────────
