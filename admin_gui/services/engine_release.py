@@ -81,21 +81,30 @@ _PUB_INSTALL = (
 _HARDCODED_DASH_RE = re.compile(
     r"(external_repository:\s*)[^\s/]+/tech-rebalance-dashboard",
 )
+# git clone URL: github.com/{owner}/tech-rebalance-dashboard.git
+_HARDCODED_CLONE_RE = re.compile(
+    r"(github\.com/)[^\s/]+(/tech-rebalance-dashboard(?:\.git)?)",
+)
 
 
 def fix_hardcoded_dashboard_owner(text: str) -> str:
-    """把 workflow 裡 hardcode 的 Dashboard repo owner 換成動態表達式。
+    """把 workflow 裡兩處 hardcode 的 Dashboard repo owner 換成動態表達式。
 
-    例：external_repository: itemhsu/tech-rebalance-dashboard
-     →  external_repository: ${{ github.repository_owner }}/tech-rebalance-dashboard
+    1. external_repository: itemhsu/tech-rebalance-dashboard
+       → external_repository: ${{ github.repository_owner }}/tech-rebalance-dashboard
 
-    任何 owner（不只 itemhsu）都會被換掉，讓 fork 使用者的 workflow
-    自動推到自己的 Dashboard repo。
+    2. github.com/itemhsu/tech-rebalance-dashboard.git（git clone URL）
+       → github.com/${{ github.repository_owner }}/tech-rebalance-dashboard.git
     """
-    return _HARDCODED_DASH_RE.sub(
+    text = _HARDCODED_DASH_RE.sub(
         r"\g<1>${{ github.repository_owner }}/tech-rebalance-dashboard",
         text,
     )
+    text = _HARDCODED_CLONE_RE.sub(
+        r"\g<1>${{ github.repository_owner }}\g<2>",
+        text,
+    )
+    return text
 
 
 def migrate_to_git_install(text: str, version: str) -> Optional[str]:

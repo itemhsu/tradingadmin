@@ -258,37 +258,46 @@ class SetupWizard(QDialog):
         if repob_ok:
             self.config.set("repob_slug", slug)
 
-        # ── ② 建 Dashboard repo（public，GitHub Pages）──────────────
+        # ── ② 建 Dashboard repo（public，GitHub Pages）+ 複製模板 ──────
         dash_ok = False
         dash_msg = ""
+        TEMPLATE_REPO = "itemhsu/tech-rebalance-dashboard"
+        # 需要複製的檔案（從 template repo 複製到用戶 dashboard repo）
+        SEED_FILES = [
+            "mvp_dashboard.html",          # 個人 NAV 看板
+            ".nojekyll",                   # GitHub Pages 不用 Jekyll
+            "momentum/index.html",         # 回測分析 SPA（讀 pub engine results/）
+        ]
+        INDEX_HTML = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<title>{u} Trading Dashboard</title>"
+            "<meta http-equiv='refresh' content='0;url=mvp_dashboard.html'>"
+            "</head><body><a href='mvp_dashboard.html'>前往 Dashboard</a></body></html>"
+        )
         # 建 repo（已存在 → 繼續）
         rc = _gh(["repo", "create", dash, "--public"])[0]
         dash_existed = (rc != 0)
         if rc == 0 or dash_existed:
-            # 推一個 placeholder index.html（讓 Pages 能啟動）
-            placeholder = (
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                f"<title>{u} Trading Dashboard</title></head>"
-                "<body><p>Dashboard 正在初始化，請等第一次自動執行後重新整理。</p>"
-                "</body></html>"
-            )
-            payload = _json.dumps({
-                "message": "init dashboard placeholder",
-                "content": _b64.b64encode(placeholder.encode()).decode(),
-            })
-            # 若檔案已存在需帶 sha
-            c2, sha_raw, _ = _gh(["api",
-                f"repos/{dash}/contents/index.html", "--jq", ".sha"])
-            if c2 == 0 and sha_raw.strip():
-                import json as _j2
-                payload = _j2.dumps({
-                    "message": "init dashboard placeholder",
-                    "content": _b64.b64encode(placeholder.encode()).decode(),
-                    "sha": sha_raw.strip(),
-                })
-            _gh(["api", "-X", "PUT",
-                 f"repos/{dash}/contents/index.html", "--input", "-"],
-                inp=payload)
+            # index.html：redirect 到 mvp_dashboard.html
+            def _put_file(path, content_bytes, msg):
+                cs, sha_raw, _ = _gh(["api", f"repos/{dash}/contents/{path}", "--jq", ".sha"])
+                p = {"message": msg, "content": _b64.b64encode(content_bytes).decode()}
+                if cs == 0 and sha_raw.strip():
+                    p["sha"] = sha_raw.strip()
+                _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{path}", "--input", "-"],
+                    inp=_json.dumps(p))
+
+            _put_file("index.html", INDEX_HTML.encode(), "init: dashboard index")
+            _put_file(".nojekyll", b"", "init: disable jekyll")
+
+            # 從 template repo 複製核心 HTML 檔案
+            for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
+                cr, content_b64, _ = _gh(["api",
+                    f"repos/{TEMPLATE_REPO}/contents/{fpath}", "--jq", ".content"])
+                if cr == 0 and content_b64.strip():
+                    raw_bytes = _b64.b64decode(content_b64.replace("\n", ""))
+                    _put_file(fpath, raw_bytes, f"init: seed {fpath} from template")
+
             # 啟用 GitHub Pages（main 分支根目錄）
             pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
             cp, _, ep = _gh(["api", "-X", "POST",

@@ -25,16 +25,22 @@ from admin_gui.services import probes
 _GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
+# 回測分析用共用 URL（momentum/index.html 讀 pub engine results/，資料通用）
+_SHARED_BACKTEST_URL = "https://itemhsu.github.io/tech-rebalance-dashboard/momentum/"
+
+
 def _dashboard_host(owner: str) -> str:
-    """每個使用者有自己的 dashboard repo（{owner}/tech-rebalance-dashboard）。"""
+    """每個使用者有自己的 dashboard repo（個人 NAV 資料）。"""
     return f"https://{owner}.github.io/tech-rebalance-dashboard"
 
 
-def dashboard_backtest_url(owner: str) -> str:
-    return f"{_dashboard_host(owner)}/momentum/"
+def dashboard_backtest_url(_owner: str = "") -> str:
+    """回測分析：共用，所有用戶都指向同一個 viewer（資料來自 pub engine）。"""
+    return _SHARED_BACKTEST_URL
 
 
 def dashboard_mvp_url(owner: str, account: str = "1") -> str:
+    """個人持倉 Dashboard：各用戶自己的 repo。"""
     return f"{_dashboard_host(owner)}/mvp_dashboard.html?a={account}"
 
 
