@@ -142,9 +142,31 @@ class OverviewView(QWidget):
         wiz_btn = QPushButton("⚙️ 重新執行設定精靈…")
         wiz_btn.clicked.connect(self._open_wizard)
         fe.addRow("", wiz_btn)
+        # 兩 repo 模式：測試執行（dry-run）按鈕 —— 僅在已建 Repo B 時顯示
+        self.dryrun_btn = QPushButton("▶ 測試執行（dry-run，不下單）")
+        self.dryrun_btn.clicked.connect(self._do_dryrun)
+        self.dryrun_btn.setVisible(bool(self.config.get("repob_slug")))
+        fe.addRow("", self.dryrun_btn)
         right.addWidget(gb2)
         right.addStretch()
         self.refresh()
+
+    def _do_dryrun(self):
+        """觸發 Repo B 的 dry-run（不下單）。"""
+        from admin_gui.services import workflow_runner as wr
+        slug = self.config.get("repob_slug")
+        if not slug:
+            QMessageBox.warning(self, "尚未建立", "請先在精靈用「建立交易系統」建立 Repo B。")
+            return
+        try:
+            ok = wr.run_workflow(slug, dry_run=True)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "觸發失敗", str(e)); return
+        if ok:
+            QMessageBox.information(self, "已觸發",
+                f"{slug} 的測試執行（dry-run）已送出。\n到該 repo 的 Actions 看結果。")
+        else:
+            QMessageBox.warning(self, "觸發失敗", "gh 觸發 workflow 失敗，請確認登入與權限。")
 
     def _open_wizard(self):
         """重新開首次設定精靈：可改 repo 或重新 gh 登入。"""
