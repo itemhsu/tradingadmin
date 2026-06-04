@@ -20,6 +20,14 @@ from admin_gui.views.schedule_view import ScheduleView
 from admin_gui.views.log_view import LogView
 
 _DEFAULT_SLUG = "itemhsu/tech-rebalance"
+_DISCARDED_REPOB_NAME = "tech-rebalance-data"  # 廢棄；如殘留快取須忽略
+
+
+def _sanitize_slug(slug: str) -> str:
+    """若 slug 指向已廢棄的 tech-rebalance-data，回 _DEFAULT_SLUG。"""
+    if slug and slug.endswith(f"/{_DISCARDED_REPOB_NAME}"):
+        return _DEFAULT_SLUG
+    return slug
 
 
 class MainWindow(QMainWindow):
@@ -61,7 +69,8 @@ def main(argv=None) -> int:
         # W-1：每次啟動都顯示精靈（保留「略過」）；略過則用既有設定
         wiz = SetupWizard(cfg)
         wiz.exec()
-        slug = wiz.chosen_repo or cfg.get("repo_slug") or _DEFAULT_SLUG
+        raw = wiz.chosen_repo or cfg.get("repob_slug") or cfg.get("repo_slug") or _DEFAULT_SLUG
+        slug = _sanitize_slug(raw)
 
     win = MainWindow(slug)
     win.show()
