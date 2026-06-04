@@ -31,13 +31,16 @@ def _yes(monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
 
 
-def test_new_steps_exist_alongside_fork(qapp, monkeypatch, tmp_path):
+def test_only_two_repo_steps_remain(qapp, monkeypatch, tmp_path):
     _, w, _ = _wizard(monkeypatch, tmp_path)
-    # 新步驟
+    # 兩-repo 步驟
     assert hasattr(w, "repob_row") and hasattr(w, "engine_row")
     assert callable(w._do_build_repob) and callable(w._do_update_engine)
-    # 舊 fork 步驟仍在（向後相容，G5 才做 mode 偵測切換）
-    assert hasattr(w, "fork_row") and hasattr(w, "pages_row") and hasattr(w, "actions_row")
+    # 舊 fork 步驟已完全移除（不再支援 fork）
+    for gone in ("fork_row", "pages_row", "actions_row", "sync_row"):
+        assert not hasattr(w, gone)
+    for fn in ("_do_fork", "_do_pages", "_do_actions", "_do_sync_upstream"):
+        assert not hasattr(w, fn)
 
 
 def test_build_repob_calls_provision(qapp, monkeypatch, tmp_path):

@@ -1,14 +1,16 @@
-"""admin_gui/views/wizard.py — 啟動精靈 v2（引導式一鍵設定）。
+"""admin_gui/views/wizard.py — 啟動精靈 v3（兩-repo 薄殼專用）。
 
-五步（對應計劃書 W-1~W-7）：
-  ① gh 登入　② Fork 範本（設為 private）　③ 確認帳號　⑥ 啟用 Pages　⑦ 啟用 Actions
-使用者只輸入「GitHub 帳號」，內部自動組成 {帳號}/tech-rebalance；不顯示/不要求完整 owner/repo。
-⑥⑦ 一鍵冪等：已完成顯示 ✅、可安全重按。精靈每次啟動都顯示、保留「略過」。
+只有兩步：
+  ① gh 登入　② 建立交易系統（兩 repo 薄殼）＋ 更新引擎版本
+使用者只輸入「GitHub 帳號」，內部自動組成 {帳號}/tech-rebalance-data（Repo B）。
+引擎以 git+ 從公開 repo 安裝（免 token / 免 wheel）。
+
+舊的 fork 路線（Fork 範本 / Pages / Actions / 同步上游）已移除——本系統一律走
+兩-repo 薄殼架構，不再支援 fork。精靈每次啟動都顯示、保留「略過」。
 不處理也不提示 Email 密碼（總覽分頁）與帳戶（帳戶分頁）。
 """
 from __future__ import annotations
 
-import json
 import subprocess
 
 from PySide6.QtWidgets import (
@@ -19,11 +21,6 @@ from PySide6.QtWidgets import (
 from admin_gui.services.probes import probe_gh
 from admin_gui.services.global_config import GlobalConfig
 
-# 內部常數：範本與倉庫名不顯示給使用者
-_TEMPLATE = "itemhsu/tech-rebalance"
-_REPO_NAME = _TEMPLATE.split("/")[-1]
-# 線上儀表板（Pages）在「另一個 public repo」，不是引擎 repo
-_DASHBOARD_REPO = "tech-rebalance-dashboard"
 # 兩 repo 架構：使用者的薄殼 Repo B（設定+資料，引擎以 git+ 從公開 repo 安裝，免 token）
 _REPOB_NAME = "tech-rebalance-data"
 _ENGINE_REPO = "itemhsu/tech-rebalance-pub"
@@ -74,20 +71,11 @@ class SetupWizard(QDialog):
         ul.addWidget(self.user_edit)
         lay.addWidget(urow)
 
-        # 舊 fork 模式步驟
-        self.fork_row = self._step_row(lay, "你的交易系統（從範本 Fork，私有）", "一鍵 Fork", self._do_fork)
-        self.pages_row = self._step_row(lay, "啟用線上儀表板（GitHub Pages）", "啟用", self._do_pages)
-        self.actions_row = self._step_row(lay, "啟用每日自動執行（GitHub Actions）", "啟用", self._do_actions)
-        # 從上游同步引擎（拉取修復；經 GitHub Sync fork API，不需 clone）
-        self.sync_row = self._step_row(lay, "從上游同步引擎（拉取最新修復）", "同步", self._do_sync_upstream)
-        # 兩 repo 架構（新）：建立薄殼 Repo B + 更新引擎版本
+        # 兩 repo 架構：建立薄殼 Repo B + 更新引擎版本（唯一路線）
         self.repob_row = self._step_row(lay, "建立交易系統（兩 repo 薄殼）", "建立", self._do_build_repob)
         self.engine_row = self._step_row(lay, "更新引擎版本", "更新", self._do_update_engine)
 
         refresh_btn = QPushButton("↻ 重新檢查狀態")
-        # 依偵測到的模式顯示對應步驟（fork / repo_b）；預設先全顯，refresh 時再收斂
-        self._fork_rows = [self.fork_row, self.pages_row, self.actions_row, self.sync_row]
-        self._repob_rows = [self.repob_row, self.engine_row]
         refresh_btn.clicked.connect(self._refresh_status)
         lay.addWidget(refresh_btn)
 
@@ -114,34 +102,11 @@ class SetupWizard(QDialog):
         lay.addWidget(row)
         return {"icon": icon, "status": status, "btn": btn, "action": action_text, "widget": row}
 
-    def _apply_mode(self, mode):
-        """依模式顯示對應步驟。
-
-        兩-repo 是預設路線：只有「明確偵測到 fork」(repo 內含引擎碼) 才顯示舊
-        fork 步驟；repo_b 與 unknown 一律只顯示新的兩-repo 步驟，避免兩套心智
-        模型同畫面混搭。
-        """
-        from admin_gui.services import mode_detect as md
-        is_fork = (mode == md.FORK)
-        for r in self._fork_rows:
-            r["widget"].setVisible(is_fork)
-        for r in self._repob_rows:
-            r["widget"].setVisible(not is_fork)
-
     def _initial_user(self) -> str:
-        slug = self.config.get("repo_slug")
+        slug = self.config.get("repob_slug") or self.config.get("repo_slug")
         if slug and "/" in slug:
             return slug.split("/")[0]
         return ""
-
-    def _managed_slug(self) -> str:
-        u = self.user_edit.text().strip()
-        return f"{u}/{_REPO_NAME}" if u else ""
-
-    def _dashboard_slug(self) -> str:
-        """線上儀表板的 repo（public，Pages 在這裡，不是引擎 repo）。"""
-        u = self.user_edit.text().strip()
-        return f"{u}/{_DASHBOARD_REPO}" if u else ""
 
     def _repob_slug(self) -> str:
         """兩 repo 架構：使用者的薄殼 Repo B（設定+資料）。"""
@@ -176,128 +141,39 @@ class SetupWizard(QDialog):
         row["btn"].setEnabled(not done)
         row["btn"].setText(("✅ 已完成" if done else row["action"]))
 
-    def _detect_mode(self) -> str:
-        """偵測使用者目前在哪條路線（repo_b 薄殼 / fork / 未知）。
-
-        先看薄殼 Repo B（tech-rebalance-data）是否已是薄殼；否則看 fork repo
-        是否含引擎碼。任何 gh 失敗都退回 unknown（精靈全顯，安全預設）。
-        """
-        from admin_gui.services import mode_detect as md
-        try:
-            from admin_gui.services.repo_store import GhContentsStore
-        except Exception:  # noqa: BLE001
-            return md.UNKNOWN
-        repob = self._repob_slug()
-        if repob:
-            m = md.detect_mode(GhContentsStore(repob))
-            if m == md.REPO_B:
-                return md.REPO_B
-        fork = self._managed_slug()
-        if fork:
-            return md.detect_mode(GhContentsStore(fork))
-        return md.UNKNOWN
-
     def _refresh_status(self):
-        from admin_gui.services import mode_detect as md
-        slug = self._managed_slug()
-        if not slug:
-            for row in (self.fork_row, self.pages_row, self.actions_row):
-                self._set_done(row, False, "")
-            self._apply_mode(md.UNKNOWN)
+        from admin_gui.services import engine_release as er
+        repob = self._repob_slug()
+        if not repob:
+            self._set_done(self.repob_row, False, "")
+            self._set_done(self.engine_row, False, "")
             return
-        # Fork：repo 是否已存在
-        code, _, _ = _gh(["api", f"repos/{slug}", "--jq", ".full_name"])
-        self._set_done(self.fork_row, code == 0, "已有（私有）")
-        # Pages —— 檢查「儀表板 repo」（非引擎 repo）
-        dash = self._dashboard_slug()
-        code, _, _ = _gh(["api", f"repos/{dash}/pages"]) if dash else (1, "", "")
-        self._set_done(self.pages_row, code == 0, "已啟用")
-        # Actions
-        code, out, _ = _gh(["api", f"repos/{slug}/actions/permissions", "--jq", ".enabled"])
-        self._set_done(self.actions_row, code == 0 and out == "true", "已啟用")
-        # 依偵測到的模式收斂顯示哪幾個步驟（fork vs repo_b）
-        self._apply_mode(self._detect_mode())
-
-    # ── ② Fork（並設為 private，W-5）────────────────────────────────────
-    def _do_fork(self):
-        if not probe_gh()[0]:
-            QMessageBox.warning(self, "尚未登入", "請先完成 GitHub 登入。"); return
-        self.fork_row["status"].setText("⏳ Fork 中…"); self.repaint()
-        code, out, err = _gh(["repo", "fork", _TEMPLATE, "--clone=false"])
-        if code != 0 and "already exists" not in (err + out).lower():
-            self.fork_row["status"].setText("❌ Fork 失敗")
-            QMessageBox.warning(self, "Fork 失敗", (err or out)[:200]); return
-        if not self.user_edit.text().strip():
-            self._detect_user()
-        slug = self._managed_slug()
-        # 設為 private（含真錢設定，務必私有）
-        ec, _, ee = _gh(["repo", "edit", slug, "--visibility", "private",
-                         "--accept-visibility-change-consequences"])
-        if ec != 0:
-            QMessageBox.warning(self, "請手動設為 Private",
-                f"Fork 完成，但自動設私有失敗：{ee[:160]}\n"
-                f"請到 GitHub 將 {slug} 設為 Private（含真錢設定）。")
-        self._refresh_status()
-
-    # ── ⑥ 啟用 Pages（在儀表板 repo，冪等）──────────────────────────────
-    def _do_pages(self):
-        dash = self._dashboard_slug()
-        if not dash:
-            QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
-        # 儀表板 repo 不存在時提示（需先有 *-dashboard repo）
-        if _gh(["api", f"repos/{dash}", "--jq", ".name"])[0] != 0:
-            QMessageBox.warning(self, "找不到儀表板 repo",
-                f"{dash} 不存在。線上儀表板需要這個 public repo；"
-                f"請先建立/取得後再啟用 Pages。")
-            return
-        payload = json.dumps({"source": {"branch": "main", "path": "/"}})
-        code, out, err = _gh(["api", "-X", "POST", f"repos/{dash}/pages",
-                             "--input", "-"], inp=payload)
-        blob = (err + out).lower()
-        if code != 0 and "409" not in blob and "already" not in blob:
-            QMessageBox.warning(self, "啟用 Pages 失敗", (err or out)[:200])
-        self._refresh_status()
-
-    # ── ⑦ 啟用 Actions（冪等）───────────────────────────────────────────
-    def _do_actions(self):
-        slug = self._managed_slug()
-        if not slug:
-            QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
-        code, out, err = _gh(["api", "-X", "PUT", f"repos/{slug}/actions/permissions",
-                             "-F", "enabled=true", "-f", "allowed_actions=all"])
-        if code != 0:
-            QMessageBox.warning(self, "啟用 Actions 失敗", (err or out)[:200])
-        self._refresh_status()
-
-    # ── ⑧ 從上游同步引擎（GitHub Sync fork API，不需 clone）─────────────
-    def _do_sync_upstream(self):
-        slug = self._managed_slug()
-        if not slug:
-            QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
-        if QMessageBox.question(
-                self, "從上游同步引擎",
-                f"將把上游最新修復合併進你的 {slug}（預設分支 main）。\n"
-                "你的 accounts.json / 帳戶資料不會被改動。要繼續嗎？"
-        ) != QMessageBox.Yes:
-            return
-        # GitHub「Sync fork」：POST /repos/{slug}/merge-upstream
-        code, out, err = _gh(["api", "-X", "POST", f"repos/{slug}/merge-upstream",
-                             "-f", "branch=main"])
-        blob = (err + out).lower()
-        if code == 0:
-            QMessageBox.information(self, "同步完成",
-                "已從上游拉取最新修復。若有更新，下次自動執行即套用。")
-        elif "409" in blob or "conflict" in blob or "diverg" in blob:
-            QMessageBox.warning(self, "需手動處理",
-                "你的 fork 與上游分歧，無法自動快轉合併。\n"
-                "請在本機執行 scripts/sync_upstream.sh，或在 GitHub 開 PR 解決。")
+        # 建立交易系統：Repo B 是否已存在
+        code, _, _ = _gh(["api", f"repos/{repob}", "--jq", ".full_name"])
+        exists = (code == 0)
+        self._set_done(self.repob_row, exists, "已建立（私有）")
+        # 更新引擎：讀 Repo B 的 daily.yml 現釘版本 vs 公開引擎最新版
+        if exists:
+            c2, content, _ = _gh(["api",
+                f"repos/{repob}/contents/.github/workflows/daily.yml", "--jq", ".content"])
+            pinned = None
+            if c2 == 0 and content:
+                import base64 as _b64
+                try:
+                    pinned = er.pinned_git_version(_b64.b64decode(content).decode("utf-8"))
+                except Exception:  # noqa: BLE001
+                    pinned = None
+            versions = er.list_versions(_ENGINE_REPO)
+            latest = versions[0] if versions else None
+            up_to_date = bool(pinned and latest and pinned.lstrip("v") == latest.lstrip("v"))
+            note = (f"已是最新 {pinned}" if up_to_date
+                    else (f"可更新 {pinned}→{latest}" if pinned and latest else ""))
+            self._set_done(self.engine_row, up_to_date, note)
         else:
-            QMessageBox.warning(self, "同步失敗", (err or out)[:200])
+            self._set_done(self.engine_row, False, "")
 
-    # ── Ⓐ 建立 Repo B（兩 repo 薄殼）─────────────────────────────────────
+    # ── 建立 Repo B（兩 repo 薄殼）───────────────────────────────────────
     def _do_build_repob(self):
-        import tempfile
-        from pathlib import Path
         from admin_gui.services import engine_release as er
         from admin_gui.services import repo_b_provisioner as pv
         slug = self._repob_slug()
@@ -362,10 +238,11 @@ class SetupWizard(QDialog):
 
     # ── 完成 ──────────────────────────────────────────────────────────
     def _finish(self):
-        slug = self._managed_slug()
+        slug = self._repob_slug()
         if not slug:
             QMessageBox.warning(self, "缺帳號", "請填入你的 GitHub 帳號。"); return
         self.chosen_repo = slug
+        self.config.set("repob_slug", slug)
         self.config.set("setup_done", True)
         self.config.set("repo_slug", slug)
         self.accept()

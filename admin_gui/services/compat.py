@@ -49,7 +49,7 @@ def schema_drift_warning(schema_filenames: List[str]) -> Optional[str]:
                 "請下載最新版 App（DMG）以正確顯示。")
     if engine_major < lo:
         return (f"引擎的報告格式為 v{engine_major}，比本 App 支援的 v{lo} 舊。"
-                "建議從上游同步引擎（scripts/sync_upstream.sh）。")
+                "請在設定精靈按「更新引擎版本」把 Repo B 釘到最新公開引擎。")
     return None
 
 
@@ -64,7 +64,7 @@ def data_schema_warning(version: Optional[str]) -> Optional[str]:
         return None
     supported = ", ".join(sorted(GUI_SUPPORTED_DATA_SCHEMA))
     return (f"⚠️ 引擎報告格式版本為 {version}，本 App 支援 {supported}。"
-            "請更新 App（下載最新 DMG）或從上游同步引擎。")
+            "請更新 App（下載最新 DMG）或在設定精靈按「更新引擎版本」。")
 
 
 # ── 兩 repo 模式：引擎版本漂移（讀 vendor wheel）─────────────────────────────

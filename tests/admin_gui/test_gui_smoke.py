@@ -120,16 +120,17 @@ def test_wizard_builds(qapp, monkeypatch, tmp_path):
     cfg = GlobalConfig(tmp_path / "config.json")
     cfg.set("repo_slug", "itemhsu/tech-rebalance")
     w = wz.SetupWizard(cfg)
-    # G-53：只輸入帳號 → 內部組 {帳號}/tech-rebalance
+    # 只輸入帳號 → 內部組 {帳號}/tech-rebalance-data（Repo B）
     assert w.user_edit.text() == "itemhsu"        # 由 repo_slug 帶出帳號
-    assert w._managed_slug() == "itemhsu/tech-rebalance"
-    # 五步動作可呼叫
-    for fn in ("_do_fork", "_do_pages", "_do_actions"):
+    assert w._repob_slug() == "itemhsu/tech-rebalance-data"
+    # 兩-repo 動作可呼叫；fork 路線已移除
+    for fn in ("_do_build_repob", "_do_update_engine"):
         assert callable(getattr(w, fn))
-    # G-52/G-55：精靈不含 Email/帳戶字樣、不顯示完整範本 slug
+    for gone in ("_do_fork", "_do_pages", "_do_actions", "_do_sync_upstream"):
+        assert not hasattr(w, gone)
+    # 精靈不含 Email/帳戶字樣、不揭露範本 slug
     texts = []
     for lbl in w.findChildren(type(w.gh_lbl)):
         texts.append(lbl.text())
     blob = " ".join(texts)
     assert "EMAIL" not in blob.upper() and "密碼" not in blob and "帳戶" not in blob
-    assert "itemhsu/tech-rebalance" not in blob   # 不揭露範本

@@ -137,12 +137,12 @@ def test_schema_drift_warns_when_engine_newer():
 def test_schema_drift_warns_when_engine_older():
     from admin_gui.services.compat import (
         schema_drift_warning, GUI_SUPPORTED_DATA_SCHEMA_MAJORS)
-    # 模擬 App 只支援 v2+，但 fork 引擎還是 v1
+    # 模擬 App 只支援 v2+，但 Repo B 引擎還是 v1
     import admin_gui.services.compat as c
     orig = set(GUI_SUPPORTED_DATA_SCHEMA_MAJORS)
     c.GUI_SUPPORTED_DATA_SCHEMA_MAJORS = {2}
     try:
         w = schema_drift_warning(["data-schema-v1.json"])
-        assert w and "v1" in w and "同步" in w
+        assert w and "v1" in w and "更新引擎版本" in w
     finally:
         c.GUI_SUPPORTED_DATA_SCHEMA_MAJORS = orig
