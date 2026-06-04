@@ -99,7 +99,7 @@ def test_overview_dryrun_button():
     mp.setattr(wr, "run_workflow", lambda slug, **k: cap.update(slug=slug, kw=k) or True)
     mp.setattr(QMessageBox, "information", lambda *a, **k: None)
     mp.setattr(QMessageBox, "warning", lambda *a, **k: None)
-    mp.setattr(v.config, "get", lambda key, default=None: "alice/tech-rebalance-data" if key == "repob_slug" else default)
+    mp.setattr(v.config, "get", lambda key, default=None: "alice/tech-rebalance" if key == "repob_slug" else default)
     v._do_dryrun()
-    assert cap["slug"] == "alice/tech-rebalance-data" and cap["kw"]["dry_run"] is True
+    assert cap["slug"] == "alice/tech-rebalance" and cap["kw"]["dry_run"] is True
     mp.undo()

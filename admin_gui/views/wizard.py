@@ -2,7 +2,7 @@
 
 只有兩步：
   ① gh 登入　② 建立交易系統（兩 repo 薄殼）＋ 更新引擎版本
-使用者只輸入「GitHub 帳號」，內部自動組成 {帳號}/tech-rebalance-data（Repo B）。
+使用者只輸入「GitHub 帳號」，內部自動組成 {帳號}/tech-rebalance（Repo B）。
 引擎以 git+ 從公開 repo 安裝（免 token / 免 wheel）。
 
 舊的 fork 路線（Fork 範本 / Pages / Actions / 同步上游）已移除——本系統一律走
@@ -22,10 +22,10 @@ from admin_gui.services.probes import probe_gh
 from admin_gui.services.global_config import GlobalConfig
 
 # 兩 repo 架構：使用者的薄殼 Repo B（設定+資料，引擎以 git+ 從公開 repo 安裝，免 token）
-# 新薄殼預設叫 tech-rebalance-data；但既有安裝可能把 Repo B 放在 tech-rebalance。
-# 解析時依序偵測「含 accounts.json」的候選，找不到才用預設名建新薄殼。
-_REPOB_NAME = "tech-rebalance-data"
-_REPOB_CANDIDATES = ("tech-rebalance", "tech-rebalance-data")  # 優先序：既有真實 Repo B 先
+# Repo B 一律為 {帳號}/tech-rebalance（單一 repo，無候選）。
+_REPOB_NAME = "tech-rebalance"
+# 已廢棄的舊命名：若 config 殘留此 slug 一律忽略，不再依賴它
+_DISCARDED_REPOB_NAME = "tech-rebalance-data"
 _ENGINE_REPO = "itemhsu/tech-rebalance-pub"
 
 
@@ -112,35 +112,16 @@ class SetupWizard(QDialog):
         return ""
 
     def _repob_slug(self) -> str:
-        """解析 Repo B slug（純函式，不連網）：
+        """解析 Repo B slug（純函式，不連網）：Repo B 一律為 {帳號}/tech-rebalance。
 
-          1. config 已存 repob_slug（偵測或建立時寫入）→ 用它
-          2. 否則用預設名 {帳號}/tech-rebalance-data（建立新薄殼時的目標）
+          1. config 已存 repob_slug → 用它（但忽略已廢棄的 *-data 殘留快取）
+          2. 否則 {帳號}/tech-rebalance
         """
         cfg = self.config.get("repob_slug")
-        if cfg:
+        if cfg and not cfg.endswith(f"/{_DISCARDED_REPOB_NAME}"):
             return cfg
         u = self.user_edit.text().strip()
         return f"{u}/{_REPOB_NAME}" if u else ""
-
-    def _detect_repob_slug(self) -> str:
-        """連網偵測既有 Repo B：在候選 repo 中找「存在且含 accounts.json」的那顆。
-
-        候選優先序見 _REPOB_CANDIDATES（既有 tech-rebalance 先於新預設
-        tech-rebalance-data）。找到就寫回 config.repob_slug 並回傳；否則回 ""。
-        """
-        u = self.user_edit.text().strip()
-        if not u:
-            return ""
-        for name in _REPOB_CANDIDATES:
-            slug = f"{u}/{name}"
-            if _gh(["api", f"repos/{slug}", "--jq", ".full_name"])[0] != 0:
-                continue
-            # accounts.json 是薄殼/Repo B 的標誌
-            if _gh(["api", f"repos/{slug}/contents/accounts.json", "--jq", ".name"])[0] == 0:
-                self.config.set("repob_slug", slug)
-                return slug
-        return ""
 
     # ── ① gh 登入 ─────────────────────────────────────────────────────
     def _refresh_gh(self):
@@ -176,13 +157,10 @@ class SetupWizard(QDialog):
             self._set_done(self.repob_row, False, "")
             self._set_done(self.engine_row, False, "")
             return
-        # 先偵測既有 Repo B（含 accounts.json 的候選）；找不到才用預設新建名
-        detected = self._detect_repob_slug()
-        repob = detected or self._repob_slug()
+        repob = self._repob_slug()
         # 建立交易系統：Repo B 是否已存在
-        exists = bool(detected) or (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
+        exists = (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
         name = repob.split("/")[-1]
-        # 顯示實際管理的 repo 名，避免命名混淆（tech-rebalance vs *-data）
         self._set_done(self.repob_row, exists, f"已建立 · {name}")
         # 更新引擎：讀 Repo B 的 daily.yml 現釘版本 vs 公開引擎最新版
         if not exists:

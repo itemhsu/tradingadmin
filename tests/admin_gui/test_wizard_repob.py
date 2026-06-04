@@ -53,13 +53,13 @@ def test_build_repob_calls_provision(qapp, monkeypatch, tmp_path):
     monkeypatch.setattr(pv, "provision",
                         lambda slug, files, **k: captured.update(slug=slug, files=files) or {"ok": True})
     w._do_build_repob()
-    assert captured["slug"] == "alice/tech-rebalance-data"
+    assert captured["slug"] == "alice/tech-rebalance"
     assert ".github/workflows/daily.yml" in captured["files"]
     # git+ 安裝公開引擎：不再 vendor wheel
     assert not any(p.startswith("vendor/") for p in captured["files"])
     daily = captured["files"][".github/workflows/daily.yml"].decode("utf-8")
     assert "git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6" in daily
-    assert cfg.get("repob_slug") == "alice/tech-rebalance-data"   # 記住 Repo B
+    assert cfg.get("repob_slug") == "alice/tech-rebalance"   # 記住 Repo B
 
 
 def test_build_repob_aborts_when_declined(qapp, monkeypatch, tmp_path):
@@ -86,7 +86,7 @@ def test_build_repob_no_versions_warns(qapp, monkeypatch, tmp_path):
 
 def test_update_engine_bumps_git_pin(qapp, monkeypatch, tmp_path):
     wz, w, cfg = _wizard(monkeypatch, tmp_path)
-    cfg.set("repob_slug", "alice/tech-rebalance-data")
+    cfg.set("repob_slug", "alice/tech-rebalance")
     _yes(monkeypatch)
     from admin_gui.services import engine_release as er
     monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
@@ -117,16 +117,12 @@ def _b64yml(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
 
-def _gh_for(existing_with_accounts: str, daily_text: str):
-    """造一個 fake _gh：只有 `existing_with_accounts`（短名）這顆 repo 存在且含
-    accounts.json；其餘候選一律 404。daily.yml 回 daily_text。"""
+def _gh_for(daily_text: str):
+    """造一個 fake _gh：Repo B（alice/tech-rebalance）存在；daily.yml 回 daily_text。"""
     def fake_gh(args, inp=None, **k):
         joined = " ".join(args)
-        if "/contents/accounts.json" in joined:
-            return (0, "accounts.json", "") if f"/{existing_with_accounts}/" in joined else (1, "", "")
         if joined.endswith("--jq .full_name"):
-            return (0, f"alice/{existing_with_accounts}", "") \
-                if f"repos/alice/{existing_with_accounts} " in joined else (1, "", "")
+            return (0, "alice/tech-rebalance", "")
         if "daily.yml" in joined and ".content" in joined:
             return (0, _b64yml(daily_text), "")
         return (0, "", "")
@@ -141,10 +137,10 @@ def test_refresh_engine_row_status_never_blank_when_not_uptodate(qapp, monkeypat
     monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
     daily = ('run: pip install "tech-rebalance @ '
              'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.4"')
-    monkeypatch.setattr(wz, "_gh", _gh_for("tech-rebalance-data", daily))
+    monkeypatch.setattr(wz, "_gh", _gh_for(daily))
 
     w._refresh_status()
-    assert w.repob_row["status"].text() == "已建立 · tech-rebalance-data"
+    assert w.repob_row["status"].text() == "已建立 · tech-rebalance"
     note = w.engine_row["status"].text()
     assert note and "v1.0.4" in note and "v1.0.6" in note      # 可更新 v1.0.4→v1.0.6
 
@@ -156,34 +152,16 @@ def test_refresh_engine_row_note_when_no_git_pin(qapp, monkeypatch, tmp_path):
     from admin_gui.services import engine_release as er
     monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
     legacy = "run: pip install vendor/tech_rebalance-1.0.3-py3-none-any.whl"
-    monkeypatch.setattr(wz, "_gh", _gh_for("tech-rebalance-data", legacy))
+    monkeypatch.setattr(wz, "_gh", _gh_for(legacy))
 
     w._refresh_status()
     note = w.engine_row["status"].text()
     assert note and "git+" in note                              # 明確提示切換
 
 
-def test_detect_prefers_existing_tech_rebalance_over_data(qapp, monkeypatch, tmp_path):
-    """命名重疊：既有 tech-rebalance（含 accounts.json）優先於 tech-rebalance-data。"""
+def test_repob_slug_ignores_discarded_data_cache(qapp, monkeypatch, tmp_path):
+    """config 殘留已廢棄的 *-data 快取 → 一律忽略，回到 {帳號}/tech-rebalance。"""
     wz, w, cfg = _wizard(monkeypatch, tmp_path)
     w.user_edit.setText("itemhsu")
-    from admin_gui.services import engine_release as er
-    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
-    daily = ('git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6')
-    # 兩顆都有 accounts.json，但偵測候選序 tech-rebalance 先 → 應選它
-    def fake_gh(args, inp=None, **k):
-        joined = " ".join(args)
-        if "/contents/accounts.json" in joined:
-            return (0, "accounts.json", "")          # 任一候選都有
-        if joined.endswith("--jq .full_name"):
-            return (0, "ok", "")                       # 任一候選都存在
-        if "daily.yml" in joined and ".content" in joined:
-            return (0, _b64yml(daily), "")
-        return (0, "", "")
-    monkeypatch.setattr(wz, "_gh", fake_gh)
-
-    slug = w._detect_repob_slug()
-    assert slug == "itemhsu/tech-rebalance"            # 不是 -data
-    assert cfg.get("repob_slug") == "itemhsu/tech-rebalance"   # 已快取
-    w._refresh_status()
-    assert w.repob_row["status"].text() == "已建立 · tech-rebalance"
+    cfg.set("repob_slug", "itemhsu/tech-rebalance-data")   # 舊版殘留
+    assert w._repob_slug() == "itemhsu/tech-rebalance"     # 不依賴 -data

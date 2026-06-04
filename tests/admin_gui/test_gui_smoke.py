@@ -120,9 +120,9 @@ def test_wizard_builds(qapp, monkeypatch, tmp_path):
     cfg = GlobalConfig(tmp_path / "config.json")
     cfg.set("repo_slug", "itemhsu/tech-rebalance")
     w = wz.SetupWizard(cfg)
-    # 只輸入帳號 → 內部組 {帳號}/tech-rebalance-data（Repo B）
+    # 只輸入帳號 → 內部組 {帳號}/tech-rebalance（Repo B）
     assert w.user_edit.text() == "itemhsu"        # 由 repo_slug 帶出帳號
-    assert w._repob_slug() == "itemhsu/tech-rebalance-data"
+    assert w._repob_slug() == "itemhsu/tech-rebalance"
     # 兩-repo 動作可呼叫；fork 路線已移除
     for fn in ("_do_build_repob", "_do_update_engine"):
         assert callable(getattr(w, fn))
