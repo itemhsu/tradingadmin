@@ -84,33 +84,62 @@ def test_build_repob_no_versions_warns(qapp, monkeypatch, tmp_path):
     assert called["n"] == 0       # 列不到版本 → 不繼續
 
 
+def _make_update_fake_gh(wf_name: str, wf_content: str):
+    """_do_update_engine 用：先列 workflows，再讀內容+sha，最後 PUT。"""
+    import json as _json
+    daily_b64 = base64.b64encode(wf_content.encode()).decode()
+    calls = []
+    def fake_gh(args, inp=None, **k):
+        calls.append((args, inp))
+        joined = " ".join(args)
+        if "[.[].name]" in joined:                            # 列 workflows
+            return (0, _json.dumps([wf_name]), "")
+        if wf_name in joined and ".content" in joined:        # 讀內容
+            return (0, daily_b64, "")
+        if wf_name in joined and ".sha" in joined:            # 讀 sha
+            return (0, "deadbeef", "")
+        if "repos/" in joined and "--jq" in joined and ".full_name" in joined:  # refresh
+            return (0, "alice/tech-rebalance", "")
+        return (0, "", "")
+    return fake_gh, calls
+
+
 def test_update_engine_bumps_git_pin(qapp, monkeypatch, tmp_path):
     wz, w, cfg = _wizard(monkeypatch, tmp_path)
     cfg.set("repob_slug", "alice/tech-rebalance")
     _yes(monkeypatch)
     from admin_gui.services import engine_release as er
     monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
-    daily_b64 = base64.b64encode(
-        b'run: pip install "tech-rebalance @ '
-        b'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.5"').decode()
-    calls = []
-    def fake_gh(args, inp=None, **k):
-        calls.append((args, inp))
-        if "--jq" in args and ".content" in args:
-            return (0, daily_b64, "")
-        if "--jq" in args and ".sha" in args:
-            return (0, "deadbeef", "")
-        return (0, "", "")
+    wf_content = ('run: pip install "tech-rebalance @ '
+                  'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.5"')
+    fake_gh, calls = _make_update_fake_gh("daily.yml", wf_content)
     monkeypatch.setattr(wz, "_gh", fake_gh)
     w._do_update_engine()
     puts = [(a, inp) for a, inp in calls if "PUT" in a]
-    assert len(puts) == 1                                   # 只動 daily.yml，不推 wheel
-    args, inp = puts[0]
-    assert "daily.yml" in " ".join(args)
-    assert not any("vendor/" in " ".join(a) for a, _ in puts)
-    pushed = base64.b64decode(__import__("json").loads(inp)["content"]).decode()
+    assert len(puts) == 1                                   # 只動一個檔，不推 wheel
+    assert "daily.yml" in " ".join(puts[0][0])
+    pushed = base64.b64decode(__import__("json").loads(puts[0][1])["content"]).decode()
     assert "tech-rebalance-pub@v1.0.6" in pushed
     assert "v1.0.5" not in pushed
+
+
+def test_update_engine_migrates_requirements_txt(qapp, monkeypatch, tmp_path):
+    """舊式 pip install -r requirements.txt → 自動遷移成 git+ 安裝。"""
+    wz, w, cfg = _wizard(monkeypatch, tmp_path)
+    cfg.set("repob_slug", "alice/tech-rebalance")
+    _yes(monkeypatch)
+    from admin_gui.services import engine_release as er
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
+    wf_content = "        run: pip install -r requirements.txt\n"
+    fake_gh, calls = _make_update_fake_gh("daily_all_accounts.yml", wf_content)
+    monkeypatch.setattr(wz, "_gh", fake_gh)
+    w._do_update_engine()
+    puts = [(a, inp) for a, inp in calls if "PUT" in a]
+    assert len(puts) == 1
+    assert "daily_all_accounts.yml" in " ".join(puts[0][0])
+    pushed = base64.b64decode(__import__("json").loads(puts[0][1])["content"]).decode()
+    assert "tech-rebalance-pub@v1.0.6" in pushed
+    assert "requirements.txt" not in pushed
 
 
 def _b64yml(text: str) -> str:

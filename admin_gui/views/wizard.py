@@ -240,8 +240,14 @@ class SetupWizard(QDialog):
         else:
             QMessageBox.warning(self, "部分失敗", res.get("error") or "推檔未全部成功，請重試。")
 
-    # ── Ⓑ 更新引擎版本 ──────────────────────────────────────────────────
+    # ── 更新引擎版本 ─────────────────────────────────────────────────────
     def _do_update_engine(self):
+        """掃 Repo B 所有 workflow，找到含 pip install 的那個，遷移或 bump 到最新 pub engine。
+
+        支援兩種情況：
+          - 已有 git+ pin → bump 版本
+          - 還在用 pip install -r requirements.txt → 遷移成 git+ 安裝
+        """
         import base64 as _b64, json as _json
         from admin_gui.services import engine_release as er
         slug = self.config.get("repob_slug") or self._repob_slug()
@@ -251,30 +257,81 @@ class SetupWizard(QDialog):
         if not versions:
             QMessageBox.warning(self, "找不到引擎版本", "無法列出公開引擎 Release。"); return
         latest = versions[0]
+
+        # ── 找目標 workflow 檔案（掃所有，優先選已有 git+ pin 的）────────
+        cw, wf_list_raw, _ = _gh(["api",
+            f"repos/{slug}/contents/.github/workflows", "--jq", "[.[].name]"])
+        wf_names = []
+        if cw == 0 and wf_list_raw:
+            try:
+                wf_names = _json.loads(wf_list_raw)
+            except Exception:  # noqa: BLE001
+                pass
+
+        target_path = target_text = target_sha = None
+        fallback_path = fallback_text = fallback_sha = None
+        for wfn in wf_names:
+            if not wfn.endswith(".yml"):
+                continue
+            path = f".github/workflows/{wfn}"
+            c2, content_b64, _ = _gh(["api",
+                f"repos/{slug}/contents/{path}", "--jq", ".content"])
+            cs, sha_raw, _ = _gh(["api",
+                f"repos/{slug}/contents/{path}", "--jq", ".sha"])
+            if c2 != 0:
+                continue
+            try:
+                text = _b64.b64decode(content_b64).decode("utf-8")
+            except Exception:  # noqa: BLE001
+                continue
+            sha = sha_raw.strip() if cs == 0 else None
+            if er.pinned_git_version(text):
+                target_path, target_text, target_sha = path, text, sha
+                break                          # git+ 已在此 → 直接用
+            if fallback_path is None and ("requirements.txt" in text
+                                          or "pip install" in text):
+                fallback_path, fallback_text, fallback_sha = path, text, sha
+
+        if target_path is None:
+            target_path, target_text, target_sha = (
+                fallback_path, fallback_text, fallback_sha)
+
+        if target_path is None:
+            QMessageBox.warning(self, "找不到 workflow",
+                f"{slug} 的 .github/workflows/ 中找不到可更新的 workflow。\n"
+                "請確認 Repo B 已建立且含 GitHub Actions workflow。")
+            return
+
+        wf_name = target_path.split("/")[-1]
         if QMessageBox.question(
                 self, "更新引擎",
-                f"將把 {slug} 的引擎更新到 {latest}（改 daily.yml 的 git+ 釘版，免 wheel）。要繼續嗎？") != QMessageBox.Yes:
+                f"將更新 {slug}/{wf_name} 的引擎為 {latest}。\n"
+                "（git+ 安裝公開引擎，免 token / 免 wheel）要繼續嗎？"
+        ) != QMessageBox.Yes:
             return
-        # 讀現有 daily.yml → 換 git+ 的 @vX → 推回（只動一個檔）
-        code, daily_text, _ = _gh(["api",
-            f"repos/{slug}/contents/.github/workflows/daily.yml", "--jq", ".content"])
-        if code != 0:
-            QMessageBox.warning(self, "讀取失敗", "讀不到 Repo B 的 daily.yml。"); return
-        try:
-            daily = _b64.b64decode(daily_text).decode("utf-8")
-        except Exception:  # noqa: BLE001
-            daily = ""
-        new_daily = er.bump_git_version(daily, latest)
-        path = ".github/workflows/daily.yml"
-        c2, meta, _ = _gh(["api", f"repos/{slug}/contents/{path}", "--jq", ".sha"])
-        body = {"message": f"update engine → {latest}",
-                "content": _b64.b64encode(new_daily.encode()).decode()}
-        if c2 == 0 and meta.strip():
-            body["sha"] = meta.strip()
-        _gh(["api", "-X", "PUT", f"repos/{slug}/contents/{path}", "--input", "-"],
-            inp=_json.dumps(body))
-        QMessageBox.information(self, "更新完成",
-            f"{slug} 的引擎已釘到 {latest}（git+ 安裝，免 token / 免 wheel）。")
+
+        new_text = er.migrate_to_git_install(target_text, latest)
+        if new_text is None:
+            QMessageBox.warning(self, "無法自動遷移",
+                f"{wf_name} 中找不到 pip install 行，無法自動更新。\n"
+                "請手動把安裝步驟改為：\n"
+                f'pip install "tech-rebalance @ git+https://github.com/itemhsu/tech-rebalance-pub@{latest}"')
+            return
+
+        body: dict = {"message": f"update engine → {latest} (git+ pub)",
+                      "content": _b64.b64encode(new_text.encode()).decode()}
+        if target_sha:
+            body["sha"] = target_sha
+        r = _gh(["api", "-X", "PUT",
+                 f"repos/{slug}/contents/{target_path}", "--input", "-"],
+                inp=_json.dumps(body))
+        if r[0] == 0:
+            QMessageBox.information(self, "更新完成",
+                f"{slug}/{wf_name} 的引擎已更新到 {latest}。")
+            self._refresh_status()
+        else:
+            QMessageBox.warning(self, "推送失敗",
+                f"更新 {wf_name} 時發生錯誤：{r[2][:200]}")
 
     # ── 完成 ──────────────────────────────────────────────────────────
     def _finish(self):

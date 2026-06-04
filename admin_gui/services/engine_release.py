@@ -66,3 +66,29 @@ def pinned_git_version(daily_yml_text: str):
 def bump_git_version(daily_yml_text: str, new_version: str) -> str:
     """把 daily.yml git+ 安裝行的 @vX 換成新版本。"""
     return _GIT_PIN_RE.sub(f"tech-rebalance-pub@{new_version}", daily_yml_text)
+
+
+_REQ_RE = re.compile(
+    r"(pip install\s+(?:-q\s+)?)-r\s+requirements\.txt",
+    re.IGNORECASE,
+)
+_PUB_INSTALL = (
+    'pip install "tech-rebalance'
+    ' @ git+https://github.com/itemhsu/tech-rebalance-pub@{version}"'
+)
+
+
+def migrate_to_git_install(text: str, version: str) -> Optional[str]:
+    """把 workflow 裡的引擎安裝方式遷移到 git+ 公開引擎。
+
+    三種情況：
+      1. 已有 git+ pin → 只 bump 版本，回傳新文字
+      2. 有 pip install -r requirements.txt → 替換成 git+ 安裝，回傳新文字
+      3. 兩者皆無 → 回 None（呼叫方顯示警告）
+    """
+    if _GIT_PIN_RE.search(text):
+        return bump_git_version(text, version)
+    if _REQ_RE.search(text):
+        new_install = _PUB_INSTALL.format(version=version)
+        return _REQ_RE.sub(lambda m: m.group(1) + new_install, text)
+    return None
