@@ -90,6 +90,9 @@ class SetupWizard(QDialog):
         lay.addWidget(brow)
 
         self._refresh_gh()
+        # 精靈顯示後自動偵測一次（singleShot 讓視窗先渲染完再跑，不卡 UI）
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(400, self._refresh_status)
 
     # ── 建一列「狀態圖示 + 標題 + 動作按鈕」並回傳控制項 dict ───────────────
     def _step_row(self, lay, title, action_text, handler) -> dict:
