@@ -180,8 +180,6 @@ class AccountDialog(QDialog):
 class AccountsView(QWidget):
     def __init__(self, repo_slug: str = "itemhsu/tech-rebalance", store=None, parent=None):
         super().__init__(parent)
-        self._repo_slug = repo_slug
-        self._repo_owner = repo_slug.split("/")[0] if "/" in repo_slug else ""
         if store is None:
             from admin_gui.services.repo_store import make_store
             store = make_store(repo_slug=repo_slug)
@@ -192,16 +190,6 @@ class AccountsView(QWidget):
         self.gh = GhClient(repo_slug)
 
         layout = QVBoxLayout(self)
-
-        # 橘色警告橫幅：當帳戶資料來自其他使用者時顯示
-        self._fork_banner = QLabel("")
-        self._fork_banner.setWordWrap(True)
-        self._fork_banner.setVisible(False)
-        self._fork_banner.setStyleSheet(
-            "background:#7c2d12;color:#fed7aa;padding:8px 12px;"
-            "border-radius:6px;font-size:12px;")
-        layout.addWidget(self._fork_banner)
-
         self.table = QTableWidget(0, len(_HEADERS))
         self.table.setHorizontalHeaderLabels(_HEADERS)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -225,38 +213,8 @@ class AccountsView(QWidget):
         layout.addWidget(self.log_box)
         self.refresh()
 
-    def _check_fork_data(self, accounts: list) -> None:
-        """偵測帳戶資料是否來自其他使用者（fork 殘留）並顯示警告。
-
-        判斷依據：email_recipients 含有非本人的 email 地址（@gmail.com 且
-        用戶名前綴不含 repo owner）。
-        """
-        if not self._repo_owner:
-            self._fork_banner.setVisible(False)
-            return
-        foreign: list[str] = []
-        owner_lower = self._repo_owner.lower()
-        for a in accounts:
-            for email in a.get("email_recipients", []):
-                if not email:
-                    continue
-                local = email.split("@")[0].lower()
-                # 如果 email 的本地端不含 owner 名稱 → 可能是別人的
-                if owner_lower not in local and local not in owner_lower:
-                    foreign.append(email)
-        if foreign:
-            uniq = sorted(set(foreign))
-            self._fork_banner.setText(
-                f"⚠️  偵測到帳戶資料可能來自其他使用者：{', '.join(uniq[:3])}\n"
-                "這通常表示你的 repo 是從別人的 repo fork 而來，帳戶設定需要重置。\n"
-                "建議：到精靈按「建立交易系統」重新建立乾淨的 Repo B。")
-            self._fork_banner.setVisible(True)
-        else:
-            self._fork_banner.setVisible(False)
-
     def refresh(self):
         accounts = self.repo.load()
-        self._check_fork_data(accounts)
         self.table.setRowCount(len(accounts))
         for r, a in enumerate(accounts):
             st = self.state.read(a)
