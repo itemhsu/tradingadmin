@@ -25,19 +25,17 @@ from admin_gui.services import probes
 _GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
-def _dashboard_host(login: str) -> str:
-    """依 GitHub 登入名合成 dashboard 站台 host（非寫死）。"""
-    return f"https://{login}.github.io/tech-rebalance-dashboard"
+def _dashboard_host(owner: str) -> str:
+    """依 repo owner 合成 dashboard 站台 host。"""
+    return f"https://{owner}.github.io/tech-rebalance-dashboard"
 
 
-def dashboard_backtest_url(login: str) -> str:
-    """依登入名合成「回測分析」網頁 URL。"""
-    return f"{_dashboard_host(login)}/momentum/"
+def dashboard_backtest_url(owner: str) -> str:
+    return f"{_dashboard_host(owner)}/momentum/"
 
 
-def dashboard_mvp_url(login: str, account: str = "1") -> str:
-    """依登入名 + 帳戶合成「持倉 Dashboard」URL（路徑非寫死）。"""
-    return f"{_dashboard_host(login)}/mvp_dashboard.html?a={account}"
+def dashboard_mvp_url(owner: str, account: str = "1") -> str:
+    return f"{_dashboard_host(owner)}/mvp_dashboard.html?a={account}"
 
 
 _EMAIL_PASS_HELP = """<b>Gmail App 密碼（16 碼）取得步驟：</b><br>
@@ -219,15 +217,20 @@ class OverviewView(QWidget):
         self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
 
         # O-2/O-3：登入名 + Dashboard 回測分析連結
+        # URL 用 repo_slug 的 owner（而非 gh_login），確保多人使用時指向正確的 GitHub Pages
         login = probes.gh_login()
-        if login:
-            self.user_lbl.setText(login)
+        self.user_lbl.setText(login or "（未登入）")
+        owner = self.repo_slug.split("/")[0] if "/" in self.repo_slug else (login or "")
+        if owner:
+            mvp_url = dashboard_mvp_url(owner)
+            bt_url  = dashboard_backtest_url(owner)
             self.mvp_lbl.setText(
-                f'<a href="{dashboard_mvp_url(login)}">📊 前往持倉 Dashboard</a>')
+                f'<a href="{mvp_url}">📊 前往持倉 Dashboard</a>'
+                f'<br><small style="color:#94a3b8">{mvp_url}</small>')
             self.dash_lbl.setText(
-                f'<a href="{dashboard_backtest_url(login)}">📈 前往回測分析</a>')
+                f'<a href="{bt_url}">📈 前往回測分析</a>'
+                f'<br><small style="color:#94a3b8">{bt_url}</small>')
         else:
-            self.user_lbl.setText("（未登入）")
             self.mvp_lbl.setText("（登入後顯示）")
             self.dash_lbl.setText("（登入後顯示）")
 
