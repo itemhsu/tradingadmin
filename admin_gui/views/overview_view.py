@@ -26,7 +26,7 @@ _GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
 def _dashboard_host(owner: str) -> str:
-    """依 repo owner 合成 dashboard 站台 host。"""
+    """每個使用者有自己的 dashboard repo（{owner}/tech-rebalance-dashboard）。"""
     return f"https://{owner}.github.io/tech-rebalance-dashboard"
 
 
@@ -216,20 +216,15 @@ class OverviewView(QWidget):
         ok2, msg2 = probes.probe_gh()
         self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
 
-        # O-2/O-3：登入名 + Dashboard 回測分析連結
-        # URL 用 repo_slug 的 owner（而非 gh_login），確保多人使用時指向正確的 GitHub Pages
+        # O-2/O-3：登入名 + Dashboard 連結（每人各自的 dashboard repo）
         login = probes.gh_login()
         self.user_lbl.setText(login or "（未登入）")
         owner = self.repo_slug.split("/")[0] if "/" in self.repo_slug else (login or "")
         if owner:
-            mvp_url = dashboard_mvp_url(owner)
-            bt_url  = dashboard_backtest_url(owner)
             self.mvp_lbl.setText(
-                f'<a href="{mvp_url}">📊 前往持倉 Dashboard</a>'
-                f'<br><small style="color:#94a3b8">{mvp_url}</small>')
+                f'<a href="{dashboard_mvp_url(owner)}">📊 前往持倉 Dashboard</a>')
             self.dash_lbl.setText(
-                f'<a href="{bt_url}">📈 前往回測分析</a>'
-                f'<br><small style="color:#94a3b8">{bt_url}</small>')
+                f'<a href="{dashboard_backtest_url(owner)}">📈 前往回測分析</a>')
         else:
             self.mvp_lbl.setText("（登入後顯示）")
             self.dash_lbl.setText("（登入後顯示）")
