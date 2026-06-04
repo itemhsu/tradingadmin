@@ -165,20 +165,37 @@ class SetupWizard(QDialog):
         exists = (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
         name = repob.split("/")[-1]
         self._set_done(self.repob_row, exists, f"已建立 · {name}")
-        # 更新引擎：讀 Repo B 的 daily.yml 現釘版本 vs 公開引擎最新版
+        # 更新引擎：掃 Repo B 的所有 workflow 檔，找到 git+ pin 即可
+        # （workflow 名稱不固定：daily.yml / daily_all_accounts.yml 等都接受）
         if not exists:
             self._set_done(self.engine_row, False, "")
             self.engine_row["status"].setText("（先建立交易系統）")
             return
-        c2, content, _ = _gh(["api",
-            f"repos/{repob}/contents/.github/workflows/daily.yml", "--jq", ".content"])
+        import base64 as _b64
         pinned = None
-        if c2 == 0 and content:
-            import base64 as _b64
+        # 1. 列出 .github/workflows/
+        cw, wf_list, _ = _gh(["api",
+            f"repos/{repob}/contents/.github/workflows", "--jq", "[.[].name]"])
+        wf_names = []
+        if cw == 0 and wf_list:
             try:
-                pinned = er.pinned_git_version(_b64.b64decode(content).decode("utf-8"))
+                import json as _json
+                wf_names = _json.loads(wf_list)
             except Exception:  # noqa: BLE001
-                pinned = None
+                wf_names = []
+        # 2. 逐一讀取，找到含 git+ pin 的那個
+        for wfn in wf_names:
+            c2, content, _ = _gh(["api",
+                f"repos/{repob}/contents/.github/workflows/{wfn}", "--jq", ".content"])
+            if c2 == 0 and content:
+                try:
+                    text = _b64.b64decode(content).decode("utf-8")
+                    p = er.pinned_git_version(text)
+                    if p:
+                        pinned = p
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
         versions = er.list_versions(_ENGINE_REPO)
         latest = versions[0] if versions else None
         up_to_date = bool(pinned and latest and pinned.lstrip("v") == latest.lstrip("v"))

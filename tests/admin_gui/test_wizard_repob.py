@@ -117,13 +117,19 @@ def _b64yml(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
 
-def _gh_for(daily_text: str):
-    """造一個 fake _gh：Repo B（alice/tech-rebalance）存在；daily.yml 回 daily_text。"""
+def _gh_for(daily_text: str, wf_name: str = "daily.yml"):
+    """造一個 fake _gh：Repo B（alice/tech-rebalance）存在；
+    workflow 目錄回 [wf_name]，該 workflow 內容回 daily_text。"""
+    import json as _json
     def fake_gh(args, inp=None, **k):
         joined = " ".join(args)
         if joined.endswith("--jq .full_name"):
             return (0, "alice/tech-rebalance", "")
-        if "daily.yml" in joined and ".content" in joined:
+        # 列 workflow 目錄
+        if ".github/workflows" in joined and "[.[].name]" in joined:
+            return (0, _json.dumps([wf_name]), "")
+        # 讀 workflow 內容
+        if wf_name in joined and ".content" in joined:
             return (0, _b64yml(daily_text), "")
         return (0, "", "")
     return fake_gh
@@ -165,3 +171,18 @@ def test_repob_slug_ignores_discarded_data_cache(qapp, monkeypatch, tmp_path):
     w.user_edit.setText("itemhsu")
     cfg.set("repob_slug", "itemhsu/tech-rebalance-data")   # 舊版殘留
     assert w._repob_slug() == "itemhsu/tech-rebalance"     # 不依賴 -data
+
+
+def test_refresh_finds_git_pin_in_daily_all_accounts_yml(qapp, monkeypatch, tmp_path):
+    """回歸：workflow 叫 daily_all_accounts.yml（非 daily.yml）也能正確偵測 git+ 釘版。"""
+    wz, w, _ = _wizard(monkeypatch, tmp_path)
+    w.user_edit.setText("itemhsu")
+    from admin_gui.services import engine_release as er
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
+    daily = ('run: pip install "tech-rebalance @ '
+             'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6"')
+    monkeypatch.setattr(wz, "_gh", _gh_for(daily, wf_name="daily_all_accounts.yml"))
+
+    w._refresh_status()
+    note = w.engine_row["status"].text()
+    assert "v1.0.6" in note and "已是最新" in note   # 找到 pin，且已是最新
