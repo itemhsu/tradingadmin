@@ -42,12 +42,12 @@ def test_catalog_works_without_repo_dirs():
     assert c.list_strategies() and c.list_brokers()   # 不因空目錄而空
 
 
-def test_catalog_fallback_to_store_when_no_manifest():
-    class S(_FakeStore):
-        def list_dir(self, p):
-            return ["top10.json", "strategy-schema-v3.json"] if p == "strategies" else []
-    c = Catalog(store=S(), manifest=None)              # fork 模式：讀目錄
-    assert c.list_strategies() == ["top10"]            # 排除 schema
+def test_catalog_static_fallback_when_no_manifest(monkeypatch):
+    """無 manifest 且 pub fetch 失敗 → 用靜態保底清單（不讀 Repo B）。"""
+    c = Catalog(manifest=None)
+    monkeypatch.setattr(c, "_fetch_pub_manifest", lambda: None)
+    assert "top10" in c.list_strategies()              # 靜態保底
+    assert "alpaca" in c.list_brokers()
 
 
 # ── E. engine drift from vendor ──────────────────────────────────────────────

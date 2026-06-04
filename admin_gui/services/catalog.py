@@ -1,20 +1,18 @@
 """admin_gui/services/catalog.py — broker / strategy 選項來源。
 
-優先序：
-  1. manifest（明確傳入）
-  2. store 目錄（repo 的 brokers/ strategies/，fork 模式）
-  3. pub engine manifest 自動 fetch（store 為空時，薄殼 Repo B 模式）
-  4. 靜態預設值（網路不通時保底，確保下拉選單永不空白）
+架構原則：brokers / strategies / schemas 是 pub engine 的公開資源，
+**不在 Repo B**。Catalog 一律從 pub engine manifest 取，不讀 Repo B。
+
+來源優先序：
+  1. manifest（明確傳入，測試或快取用）
+  2. pub engine manifest（自動 fetch，快取一次）
+  3. 靜態預設值（網路不通時保底，確保下拉永不空白）
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List, Optional
 
 from admin_gui.services import manifest as mf
-from admin_gui.services.repo_store import LocalStore
-
-_DEFAULT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # 保底預設值——pub engine 支援的最小集合（網路不通時使用）
 _FALLBACK_BROKERS = ["alpaca", "tradier"]
@@ -25,25 +23,13 @@ _FALLBACK_STRATEGIES = [
 _FALLBACK_ENVS = {"alpaca": ["paper", "live"], "tradier": ["paper", "live"]}
 
 
-def _stems(names: List[str], exclude: str) -> List[str]:
-    out = []
-    for n in names:
-        if n.endswith(".json") and exclude not in n:
-            out.append(n[:-len(".json")])
-    return sorted(out)
-
-
 class Catalog:
     def __init__(self, root=None, store=None, manifest: Optional[dict] = None) -> None:
-        self.manifest = manifest          # 給了就用 manifest（repo_b 模式）
-        self._cached_pub: Optional[dict] = None   # pub engine manifest 快取
-        if store is not None:
-            self.store = store
-            self.root = getattr(store, "root", _DEFAULT_ROOT)
-        else:
-            self.root = Path(root) if root else _DEFAULT_ROOT
-            self.store = LocalStore(self.root)
+        # store / root 保留供相容（catalog 已不讀 Repo B，但呼叫端仍傳入）
+        self.manifest = manifest
+        self._cached_pub: Optional[dict] = None
 
+    # ── manifest 來源 ────────────────────────────────────────────────────
     def _fetch_pub_manifest(self) -> Optional[dict]:
         """從 pub engine 最新 release 取 manifest（快取，只請求一次）。"""
         if self._cached_pub is not None:
@@ -60,59 +46,41 @@ class Catalog:
             pass
         return None
 
-    # ── 策略 / 券商清單 ──────────────────────────────────────────────────
-    def list_brokers(self) -> List[str]:
+    def _effective_manifest(self) -> dict:
+        """有效 manifest：明確傳入 > pub engine auto-fetch > {}。"""
         if self.manifest is not None:
-            return mf.brokers(self.manifest)
-        result = _stems(self.store.list_dir("brokers"), "broker-schema")
-        if result:
-            return result
-        # store 為空（薄殼 Repo B）→ 從 pub engine manifest 取
-        m = self._fetch_pub_manifest()
-        if m:
-            return mf.brokers(m)
-        return _FALLBACK_BROKERS
+            return self.manifest
+        return self._fetch_pub_manifest() or {}
+
+    # ── 券商 / 策略清單（全部讀 manifest，不讀 Repo B）──────────────────
+    def list_brokers(self) -> List[str]:
+        m = self._effective_manifest()
+        return mf.brokers(m) if m.get("brokers") else _FALLBACK_BROKERS
 
     def list_strategies(self) -> List[str]:
-        if self.manifest is not None:
-            return mf.strategies(self.manifest)
-        result = _stems(self.store.list_dir("strategies"), "schema")
-        if result:
-            return result
-        m = self._fetch_pub_manifest()
-        if m:
-            return mf.strategies(m)
-        return _FALLBACK_STRATEGIES
+        m = self._effective_manifest()
+        return mf.strategies(m) if m.get("strategies") else _FALLBACK_STRATEGIES
+
+    def broker_spec(self, broker_id: str) -> dict:
+        m = self._effective_manifest()
+        return (m.get("brokers") or {}).get(broker_id, {})
 
     def broker_environments(self, broker_id: str) -> List[str]:
-        if self.manifest is not None:
-            return mf.broker_environments(self.manifest, broker_id)
-        envs = sorted((self.broker_spec(broker_id).get("environments") or {}).keys())
-        if envs:
-            return envs
-        m = self._fetch_pub_manifest()
-        if m:
-            e = mf.broker_environments(m, broker_id)
-            if e:
-                return e
+        m = self._effective_manifest()
+        if m.get("brokers"):
+            envs = mf.broker_environments(m, broker_id)
+            if envs:
+                return envs
         return _FALLBACK_ENVS.get(broker_id, ["paper", "live"])
 
     def required_secrets(self, secret_prefix: str, broker_id: str) -> List[str]:
-        """該帳戶應設的 Secret 名稱。"""
-        if self.manifest is not None:
-            return mf.required_secrets(self.manifest, broker_id, secret_prefix)
-        auth = self.broker_spec(broker_id).get("auth", {}) or {}
-        secrets = [tpl.replace("{PREFIX}", secret_prefix)
-                   for tpl in (auth.get("required_env") or [])]
-        if secrets:
-            return secrets
-        m = self._fetch_pub_manifest()
-        if m:
-            s = mf.required_secrets(m, broker_id, secret_prefix)
-            if s:
-                return s
-        return []
-
-    # ── 舊 fork 模式才用（讀 repo 目錄）─────────────────────────────────
-    def broker_spec(self, broker_id: str) -> dict:
-        return self.store.read_json(f"brokers/{broker_id}.json")
+        """該帳戶應設的 Secret 名稱（manifest 的 required_env 模板）。"""
+        m = self._effective_manifest()
+        if m.get("brokers"):
+            secrets = mf.required_secrets(m, broker_id, secret_prefix)
+            if secrets:
+                return secrets
+        # fallback：alpaca 的標準雙金鑰
+        spec = self.broker_spec(broker_id)
+        return [t.replace("{PREFIX}", secret_prefix)
+                for t in (spec.get("required_env") or [])]

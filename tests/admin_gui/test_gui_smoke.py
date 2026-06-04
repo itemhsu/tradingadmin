@@ -24,6 +24,23 @@ def qapp():
     yield app
 
 
+def _local_manifest():
+    """從本地 brokers/ + strategies/ fixture 組一個 manifest（取代 pub engine fetch）。"""
+    import glob, json
+    brokers = {}
+    for f in glob.glob(str(ROOT / "brokers" / "*.json")):
+        name = Path(f).stem
+        if "schema" in name:
+            continue
+        spec = json.loads(Path(f).read_text(encoding="utf-8"))
+        spec["environments"] = list((spec.get("environments") or {}).keys())
+        spec["required_env"] = (spec.get("auth") or {}).get("required_env", [])
+        brokers[name] = spec
+    strategies = [Path(f).stem for f in glob.glob(str(ROOT / "strategies" / "*.json"))
+                  if "schema" not in Path(f).stem]
+    return {"brokers": brokers, "strategies": sorted(strategies)}
+
+
 @pytest.fixture
 def no_net(monkeypatch):
     """擋掉 overview/accounts 的 gh / 網路呼叫。"""
@@ -35,6 +52,9 @@ def no_net(monkeypatch):
     import admin_gui.services.probes as pr
     monkeypatch.setattr(pr, "probe_gh", lambda *a, **k: (True, "gh 已登入"))
     monkeypatch.setattr(pr, "gh_login", lambda *a, **k: "itemhsu")
+    # Catalog 改讀 pub engine manifest → 測試用本地 fixture 取代，離線且確定
+    from admin_gui.services.catalog import Catalog
+    monkeypatch.setattr(Catalog, "_fetch_pub_manifest", lambda self: _local_manifest())
 
 
 SLUG = "itemhsu/tech-rebalance"

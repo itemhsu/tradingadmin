@@ -15,8 +15,6 @@ from PySide6.QtWidgets import (
 
 from admin_gui.services import cron_editor as ce
 
-_WORKFLOWS = [".github/workflows/daily_all_accounts.yml",
-              ".github/workflows/momentum_tool_v2.yml"]
 _TZ_OFFSET = 8   # 台灣 UTC+8
 
 
@@ -61,10 +59,18 @@ class ScheduleView(QWidget):
         self._rows: List[tuple] = []
         self.refresh()
 
+    def _list_workflows(self) -> list:
+        """動態列出 .github/workflows/ 所有 .yml 檔案（不再硬寫名稱）。"""
+        try:
+            names = self.store.list_dir(".github/workflows")
+            return [f".github/workflows/{n}" for n in names if n.endswith(".yml")]
+        except Exception:  # noqa: BLE001
+            return []
+
     def refresh(self):
         self._rows = []
         self._wf_text = {}
-        for wf in _WORKFLOWS:
+        for wf in self._list_workflows():
             try:
                 text = self.store.read_text_or_none(wf)
             except Exception:  # noqa: BLE001

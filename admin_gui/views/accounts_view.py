@@ -129,6 +129,10 @@ class AccountDialog(QDialog):
         values = {k: e.text().strip() for k, e in self.cred_edits.items()}
         has_input = any(values.values())
 
+        # 新帳戶必須輸入並通過金鑰測試才能建立（避免存進未驗證的壞帳戶）
+        if not has_input and not self.original:
+            self.status.setText("❌ 新帳戶需輸入 API 金鑰並測試（未儲存）"); return
+
         if env == "live":
             if QMessageBox.question(self, "真錢確認",
                 f"帳戶「{name}」將以【真錢 live】每日自動交易。確定？") != QMessageBox.Yes:

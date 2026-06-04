@@ -238,20 +238,9 @@ class OverviewView(QWidget):
         self._refresh_drift_banner()
 
     def _refresh_drift_banner(self):
-        """偵測 fork 引擎的 data-schema 版本是否與本 App 支援範圍錯位（fork 相容性 §6.1 ⑨）。"""
-        from admin_gui.services import compat
-        from admin_gui.services.repo_store import make_store
-        warning = None
-        try:
-            files = make_store(self.repo_slug).list_dir("schemas")
-            warning = compat.schema_drift_warning(files)
-        except Exception:
-            warning = None      # 讀不到（網路/權限）→ 不顯示，不打擾
-        if warning:
-            self.drift_banner.setText("⚠️ " + warning)
-            self.drift_banner.setVisible(True)
-        else:
-            self.drift_banner.setVisible(False)
+        """兩-repo 架構：schemas/ 在 pub engine、引擎以 git+ 釘版，不存在 fork 漂移。
+        漂移由「更新引擎版本」管理，這裡不再讀 Repo B 的 schemas/。"""
+        self.drift_banner.setVisible(False)
 
     def _set(self, name):
         dlg = _SetSecretDialog(name, self)

@@ -9,12 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from admin_gui.services.catalog import Catalog
 from admin_gui.services import broker_creds, probes
 
-CAT = Catalog(ROOT)
-ALPACA = CAT.broker_spec("alpaca")
-TRADIER = CAT.broker_spec("tradier")
+# broker spec 由 pub engine 提供；測試直接讀本地 fixture（離線、測 broker_creds 邏輯）
+ALPACA = json.loads((ROOT / "brokers" / "alpaca.json").read_text())
+TRADIER = json.loads((ROOT / "brokers" / "tradier.json").read_text())
 
 
 # ── G-65：使用者要輸入的金鑰欄位依券商 ──────────────────────────────────

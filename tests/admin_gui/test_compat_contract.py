@@ -62,23 +62,26 @@ def test_account_tolerates_future_fields():
     assert validate_account(d) == []                 # 未知欄位不應造成驗證錯誤
 
 
-# ── Catalog 解析最小券商 spec ───────────────────────────────────────────────
+# ── Catalog 從 pub engine manifest 解析券商 spec（不讀 Repo B）───────────────
 def test_catalog_parses_minimal_broker_spec():
-    import json
-    spec = {"id": "alpaca", "version": "1.0",
-            "auth": {"required_env": ["{PREFIX}_API_KEY", "{PREFIX}_API_SECRET"]},
-            "environments": {"paper": {}, "live": {}},
-            _FUTURE: "ignored"}
-    store = FakeStore(
-        files={"brokers/alpaca.json": json.dumps(spec)},
-        dirs={"brokers": ["alpaca.json", "broker-schema-v2.json"],
-              "strategies": ["top10.json", "strategy-schema-v3.json"]},
-    )
-    cat = Catalog(store=store)
-    assert "alpaca" in cat.list_brokers()            # 排除 broker-schema
-    assert "top10" in cat.list_strategies()          # 排除 schema
-    assert cat.broker_environments("alpaca") == ["live", "paper"]
+    manifest = {
+        "brokers": {
+            "alpaca": {
+                "auth": {"method": "api_key_secret",
+                         "required_env": ["{PREFIX}_API_KEY", "{PREFIX}_API_SECRET"]},
+                "environments": ["paper", "live"],
+                "required_env": ["{PREFIX}_API_KEY", "{PREFIX}_API_SECRET"],
+            }
+        },
+        "strategies": ["top10"],
+    }
+    cat = Catalog(manifest=manifest)
+    assert "alpaca" in cat.list_brokers()
+    assert "top10" in cat.list_strategies()
+    assert cat.broker_environments("alpaca") == ["paper", "live"]
     assert cat.required_secrets("ACC9", "alpaca") == ["ACC9_API_KEY", "ACC9_API_SECRET"]
+    # broker_spec 回完整 spec（含 auth），credential_inputs 才有兩個欄位
+    assert cat.broker_spec("alpaca").get("auth", {}).get("method") == "api_key_secret"
 
 
 # ── StateReader 對最小/未來/壞掉的 state 寬鬆 ────────────────────────────────
