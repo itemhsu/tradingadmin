@@ -38,7 +38,7 @@ def cron_runs(repo: str = "itemhsu/tech-rebalance", limit: int = 10,
     run = runner or subprocess.run
     try:
         r = run(["gh", "run", "list", "--repo", repo, "--limit", str(limit),
-                 "--json", "workflowName,status,conclusion,createdAt"],
+                 "--json", "databaseId,workflowName,status,conclusion,createdAt"],
                 capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
             return []
