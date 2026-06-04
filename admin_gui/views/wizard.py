@@ -24,6 +24,9 @@ _TEMPLATE = "itemhsu/tech-rebalance"
 _REPO_NAME = _TEMPLATE.split("/")[-1]
 # 線上儀表板（Pages）在「另一個 public repo」，不是引擎 repo
 _DASHBOARD_REPO = "tech-rebalance-dashboard"
+# 兩 repo 架構：使用者的薄殼 Repo B（設定+資料，引擎用 vendored wheel）
+_REPOB_NAME = "tech-rebalance-data"
+_ENGINE_REPO = "itemhsu/tech-rebalance"
 
 
 def is_first_run(config: GlobalConfig) -> bool:
@@ -79,6 +82,9 @@ class SetupWizard(QDialog):
         self.actions_row = self._step_row(lay, "⑦ 啟用每日自動執行（GitHub Actions）", "啟用", self._do_actions)
         # ⑧ 從上游同步引擎（拉取修復；經 GitHub Sync fork API，不需 clone）
         self.sync_row = self._step_row(lay, "⑧ 從上游同步引擎（拉取最新修復）", "同步", self._do_sync_upstream)
+        # 兩 repo 架構（新）：建立薄殼 Repo B + 更新引擎版本
+        self.repob_row = self._step_row(lay, "Ⓐ 建立交易系統（兩 repo 薄殼）", "建立", self._do_build_repob)
+        self.engine_row = self._step_row(lay, "Ⓑ 更新引擎版本", "更新", self._do_update_engine)
 
         refresh_btn = QPushButton("↻ 重新檢查狀態")
         refresh_btn.clicked.connect(self._refresh_status)
@@ -121,6 +127,11 @@ class SetupWizard(QDialog):
         """線上儀表板的 repo（public，Pages 在這裡，不是引擎 repo）。"""
         u = self.user_edit.text().strip()
         return f"{u}/{_DASHBOARD_REPO}" if u else ""
+
+    def _repob_slug(self) -> str:
+        """兩 repo 架構：使用者的薄殼 Repo B（設定+資料）。"""
+        u = self.user_edit.text().strip()
+        return f"{u}/{_REPOB_NAME}" if u else ""
 
     # ── ① gh 登入 ─────────────────────────────────────────────────────
     def _refresh_gh(self):
@@ -242,6 +253,87 @@ class SetupWizard(QDialog):
                 "請在本機執行 scripts/sync_upstream.sh，或在 GitHub 開 PR 解決。")
         else:
             QMessageBox.warning(self, "同步失敗", (err or out)[:200])
+
+    # ── Ⓐ 建立 Repo B（兩 repo 薄殼）─────────────────────────────────────
+    def _do_build_repob(self):
+        import tempfile
+        from pathlib import Path
+        from admin_gui.services import engine_release as er
+        from admin_gui.services import repo_b_provisioner as pv
+        slug = self._repob_slug()
+        if not slug:
+            QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
+        if QMessageBox.question(
+                self, "建立交易系統",
+                f"將建立 private repo {slug}（薄殼：設定+資料+引擎 wheel）。\n"
+                "之後你只需在它的 Settings 設 Alpaca 金鑰。要繼續嗎？"
+        ) != QMessageBox.Yes:
+            return
+        versions = er.list_versions(_ENGINE_REPO)
+        if not versions:
+            QMessageBox.warning(self, "找不到引擎版本",
+                                "無法列出引擎 Release，請確認 gh 已登入且有讀取權限。"); return
+        latest = versions[0]
+        with tempfile.TemporaryDirectory() as td:
+            wheel = er.download_wheel(latest, td, _ENGINE_REPO)
+            if not wheel:
+                QMessageBox.warning(self, "下載失敗", f"無法下載引擎 {latest} 的 wheel。"); return
+            wheel_bytes = (Path(td) / wheel).read_bytes()
+        files = pv.build_template_files(wheel, wheel_bytes)
+        res = pv.provision(slug, files)
+        if res["ok"]:
+            QMessageBox.information(self, "建立完成",
+                f"{slug} 已建立並放好引擎 {latest}。\n"
+                "下一步：到該 repo Settings → Secrets 設 ACC1_ALPACA_KEY / ACC1_ALPACA_SECRET。")
+            self.config.set("repob_slug", slug)
+        else:
+            QMessageBox.warning(self, "部分失敗", res.get("error") or "推檔未全部成功，請重試。")
+
+    # ── Ⓑ 更新引擎版本 ──────────────────────────────────────────────────
+    def _do_update_engine(self):
+        import base64 as _b64, json as _json, tempfile
+        from pathlib import Path
+        from admin_gui.services import engine_release as er
+        slug = self.config.get("repob_slug") or self._repob_slug()
+        if not slug:
+            QMessageBox.warning(self, "缺 Repo B", "請先建立交易系統（Ⓐ）。"); return
+        versions = er.list_versions(_ENGINE_REPO)
+        if not versions:
+            QMessageBox.warning(self, "找不到引擎版本", "無法列出引擎 Release。"); return
+        latest = versions[0]
+        if QMessageBox.question(
+                self, "更新引擎",
+                f"將把 {slug} 的引擎更新到 {latest}。要繼續嗎？") != QMessageBox.Yes:
+            return
+        # 讀現有 daily.yml → bump → 推新 wheel + 新 daily.yml
+        with tempfile.TemporaryDirectory() as td:
+            wheel = er.download_wheel(latest, td, _ENGINE_REPO)
+            if not wheel:
+                QMessageBox.warning(self, "下載失敗", f"無法下載 {latest} 的 wheel。"); return
+            wheel_bytes = (Path(td) / wheel).read_bytes()
+        code, daily_text, _ = _gh(["api",
+            f"repos/{slug}/contents/.github/workflows/daily.yml", "--jq", ".content"])
+        if code != 0:
+            QMessageBox.warning(self, "讀取失敗", "讀不到 Repo B 的 daily.yml。"); return
+        try:
+            daily = _b64.b64decode(daily_text).decode("utf-8")
+        except Exception:  # noqa: BLE001
+            daily = ""
+        new_daily = er.bump_daily(daily, latest)
+        # 推新 wheel
+        for path, content in ((f"vendor/{wheel}", wheel_bytes),
+                              (".github/workflows/daily.yml", new_daily.encode())):
+            payload = _json.dumps({"message": f"update engine → {latest}",
+                                   "content": _b64.b64encode(content).decode()})
+            # 既有檔需帶 sha
+            c2, meta, _ = _gh(["api", f"repos/{slug}/contents/{path}", "--jq", ".sha"])
+            if c2 == 0 and meta.strip():
+                payload = _json.dumps({"message": f"update engine → {latest}",
+                                       "content": _b64.b64encode(content).decode(),
+                                       "sha": meta.strip()})
+            _gh(["api", "-X", "PUT", f"repos/{slug}/contents/{path}", "--input", "-"], inp=payload)
+        QMessageBox.information(self, "更新完成",
+            f"{slug} 的引擎已更新到 {latest}（新 wheel + daily.yml）。")
 
     # ── 完成 ──────────────────────────────────────────────────────────
     def _finish(self):
