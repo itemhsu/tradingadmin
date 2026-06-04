@@ -87,6 +87,9 @@ class SetupWizard(QDialog):
         self.engine_row = self._step_row(lay, "Ⓑ 更新引擎版本", "更新", self._do_update_engine)
 
         refresh_btn = QPushButton("↻ 重新檢查狀態")
+        # 依偵測到的模式顯示對應步驟（fork / repo_b）；預設先全顯，refresh 時再收斂
+        self._fork_rows = [self.fork_row, self.pages_row, self.actions_row, self.sync_row]
+        self._repob_rows = [self.repob_row, self.engine_row]
         refresh_btn.clicked.connect(self._refresh_status)
         lay.addWidget(refresh_btn)
 
@@ -111,7 +114,15 @@ class SetupWizard(QDialog):
         h.addWidget(icon); h.addWidget(text); h.addStretch()
         h.addWidget(status); h.addWidget(btn)
         lay.addWidget(row)
-        return {"icon": icon, "status": status, "btn": btn, "action": action_text}
+        return {"icon": icon, "status": status, "btn": btn, "action": action_text, "widget": row}
+
+    def _apply_mode(self, mode):
+        """依模式顯示對應步驟：fork 顯示舊步驟、repo_b 顯示新步驟、unknown 全顯。"""
+        from admin_gui.services import mode_detect as md
+        for r in self._fork_rows:
+            r["widget"].setVisible(mode != md.REPO_B)
+        for r in self._repob_rows:
+            r["widget"].setVisible(mode != md.FORK)
 
     def _initial_user(self) -> str:
         slug = self.config.get("repo_slug")
