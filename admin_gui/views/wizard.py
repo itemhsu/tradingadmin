@@ -161,10 +161,22 @@ class SetupWizard(QDialog):
             self._set_done(self.engine_row, False, "")
             return
         repob = self._repob_slug()
-        # 建立交易系統：Repo B 是否已存在
-        exists = (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
-        name = repob.split("/")[-1]
-        self._set_done(self.repob_row, exists, f"已建立 · {name}")
+        u = self.user_edit.text().strip()
+        dash  = f"{u}/tech-rebalance-dashboard"
+        # 建立交易系統：兩個 repo 都要存在才算完成
+        repob_ok = (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
+        dash_ok  = (_gh(["api", f"repos/{dash}",  "--jq", ".full_name"])[0] == 0)
+        both_ok  = repob_ok and dash_ok
+        if both_ok:
+            note = f"已建立 · {repob.split('/')[-1]} + dashboard"
+        elif repob_ok:
+            note = f"已建立 {repob.split('/')[-1]}，尚缺 dashboard repo"
+        elif dash_ok:
+            note = f"已建立 dashboard，尚缺 {repob.split('/')[-1]}"
+        else:
+            note = ""
+        self._set_done(self.repob_row, both_ok, note)
+        exists = repob_ok   # 引擎檢查只需要 Repo B
         # 更新引擎：掃 Repo B 的所有 workflow 檔，找到 git+ pin 即可
         # （workflow 名稱不固定：daily.yml / daily_all_accounts.yml 等都接受）
         if not exists:

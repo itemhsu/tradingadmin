@@ -146,13 +146,17 @@ def _b64yml(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
 
-def _gh_for(daily_text: str, wf_name: str = "daily.yml"):
+def _gh_for(daily_text: str, wf_name: str = "daily.yml",
+            dash_exists: bool = True):
     """造一個 fake _gh：Repo B（alice/tech-rebalance）存在；
-    workflow 目錄回 [wf_name]，該 workflow 內容回 daily_text。"""
+    workflow 目錄回 [wf_name]，該 workflow 內容回 daily_text。
+    dash_exists 控制 dashboard repo 是否存在（預設存在）。"""
     import json as _json
     def fake_gh(args, inp=None, **k):
         joined = " ".join(args)
         if joined.endswith("--jq .full_name"):
+            if "tech-rebalance-dashboard" in joined:
+                return (0, "alice/tech-rebalance-dashboard", "") if dash_exists else (1, "", "")
             return (0, "alice/tech-rebalance", "")
         # 列 workflow 目錄
         if ".github/workflows" in joined and "[.[].name]" in joined:
@@ -175,7 +179,9 @@ def test_refresh_engine_row_status_never_blank_when_not_uptodate(qapp, monkeypat
     monkeypatch.setattr(wz, "_gh", _gh_for(daily))
 
     w._refresh_status()
-    assert w.repob_row["status"].text() == "已建立 · tech-rebalance"
+    # 兩個 repo 都存在 → 顯示 "已建立 · tech-rebalance + dashboard"
+    assert "已建立" in w.repob_row["status"].text()
+    assert "dashboard" in w.repob_row["status"].text()
     note = w.engine_row["status"].text()
     assert note and "v1.0.4" in note and "v1.0.6" in note      # 可更新 v1.0.4→v1.0.6
 
