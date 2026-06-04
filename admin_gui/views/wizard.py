@@ -212,33 +212,91 @@ class SetupWizard(QDialog):
         # 「更新引擎」這列：未完成也要顯示狀態（_set_done 預設會清空）
         self.engine_row["status"].setText(note)
 
-    # ── 建立 Repo B（兩 repo 薄殼）───────────────────────────────────────
+    # ── 建立 Repo B + Dashboard（一次兩個，已存在略過）───────────────────
     def _do_build_repob(self):
+        import base64 as _b64, json as _json
         from admin_gui.services import engine_release as er
         from admin_gui.services import repo_b_provisioner as pv
-        slug = self._repob_slug()
-        if not slug:
+
+        u = self.user_edit.text().strip()
+        if not u:
             QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
+        slug  = self._repob_slug()                         # {user}/tech-rebalance
+        dash  = f"{u}/tech-rebalance-dashboard"            # {user}/tech-rebalance-dashboard
+
         if QMessageBox.question(
                 self, "建立交易系統",
-                f"將建立 private repo {slug}（薄殼：設定+資料；引擎以 git+ 從公開 repo 安裝，免 token）。\n"
-                "之後你只需在它的 Settings 設 Alpaca 金鑰。要繼續嗎？"
+                f"將建立：\n"
+                f"  • {slug}（private，薄殼 Repo B）\n"
+                f"  • {dash}（public，GitHub Pages Dashboard）\n"
+                "已存在的 repo 會略過。要繼續嗎？"
         ) != QMessageBox.Yes:
             return
+
         versions = er.list_versions(_ENGINE_REPO)
         if not versions:
             QMessageBox.warning(self, "找不到引擎版本",
                                 "無法列出公開引擎 Release，請確認 gh 已登入。"); return
         latest = versions[0]
-        files = pv.build_template_files(latest)   # git+ 安裝，不下載 wheel
+
+        # ── ① 建 Repo B（薄殼，private）──────────────────────────────
+        files = pv.build_template_files(latest)
         res = pv.provision(slug, files)
-        if res["ok"]:
-            QMessageBox.information(self, "建立完成",
-                f"{slug} 已建立（引擎釘 {latest}，git+ 安裝公開引擎）。\n"
-                "下一步：到該 repo Settings → Secrets 設 ACC1_ALPACA_KEY / ACC1_ALPACA_SECRET。")
+        repob_ok = res["ok"]
+        if repob_ok:
             self.config.set("repob_slug", slug)
+
+        # ── ② 建 Dashboard repo（public，GitHub Pages）──────────────
+        dash_ok = False
+        dash_msg = ""
+        # 建 repo（已存在 → 繼續）
+        rc = _gh(["repo", "create", dash, "--public"])[0]
+        dash_existed = (rc != 0)
+        if rc == 0 or dash_existed:
+            # 推一個 placeholder index.html（讓 Pages 能啟動）
+            placeholder = (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                f"<title>{u} Trading Dashboard</title></head>"
+                "<body><p>Dashboard 正在初始化，請等第一次自動執行後重新整理。</p>"
+                "</body></html>"
+            )
+            payload = _json.dumps({
+                "message": "init dashboard placeholder",
+                "content": _b64.b64encode(placeholder.encode()).decode(),
+            })
+            # 若檔案已存在需帶 sha
+            c2, sha_raw, _ = _gh(["api",
+                f"repos/{dash}/contents/index.html", "--jq", ".sha"])
+            if c2 == 0 and sha_raw.strip():
+                import json as _j2
+                payload = _j2.dumps({
+                    "message": "init dashboard placeholder",
+                    "content": _b64.b64encode(placeholder.encode()).decode(),
+                    "sha": sha_raw.strip(),
+                })
+            _gh(["api", "-X", "PUT",
+                 f"repos/{dash}/contents/index.html", "--input", "-"],
+                inp=payload)
+            # 啟用 GitHub Pages（main 分支根目錄）
+            pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
+            cp, _, ep = _gh(["api", "-X", "POST",
+                             f"repos/{dash}/pages", "--input", "-"],
+                            inp=pages_payload)
+            dash_ok = cp == 0 or "already" in ep.lower() or "409" in ep
+            dash_msg = "已啟用" if dash_ok else f"Pages 啟用失敗（{ep[:60]}）"
         else:
-            QMessageBox.warning(self, "部分失敗", res.get("error") or "推檔未全部成功，請重試。")
+            dash_msg = "建立失敗"
+
+        # ── 結果摘要 ──────────────────────────────────────────────────
+        repob_status = "✅ 已建立" if repob_ok else "⚠ 部分失敗（見下方）"
+        dash_status  = f"✅ {dash_msg}" if dash_ok else f"⚠ {dash_msg}"
+        QMessageBox.information(self, "建立完成",
+            f"Repo B：{repob_status}\n"
+            f"Dashboard：{dash_status}\n\n"
+            f"下一步：\n"
+            f"1. 到 {slug} Settings → Secrets 設 Alpaca 金鑰\n"
+            f"2. Dashboard URL：https://{u}.github.io/tech-rebalance-dashboard/")
+        self._refresh_status()
 
     # ── 更新引擎版本 ─────────────────────────────────────────────────────
     def _do_update_engine(self):

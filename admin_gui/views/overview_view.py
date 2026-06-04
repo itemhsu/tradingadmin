@@ -155,18 +155,18 @@ class OverviewView(QWidget):
         self.gh_lbl = QLabel("…"); fe.addRow("gh（GitHub CLI）", self.gh_lbl)
         # O-2：顯示 GitHub 登入名（不顯示 repo slug）
         self.user_lbl = QLabel("…"); fe.addRow("GitHub 登入", self.user_lbl)
-        # O-3：Dashboard 回測分析網頁連結（依登入名推導）
+        # O-3：Dashboard 回測分析網頁連結
         self.mvp_lbl = QLabel("…"); self.mvp_lbl.setOpenExternalLinks(True)
         fe.addRow("持倉 Dashboard", self.mvp_lbl)
         self.dash_lbl = QLabel("…"); self.dash_lbl.setOpenExternalLinks(True)
         fe.addRow("回測分析", self.dash_lbl)
         mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
         fe.addRow("存取方式", mode)
-        # 重新開設定精靈（換 repo / 重新 gh 登入）——首次設定完成後仍可進入
+        # 重新開設定精靈
         wiz_btn = QPushButton("⚙️ 重新執行設定精靈…")
         wiz_btn.clicked.connect(self._open_wizard)
         fe.addRow("", wiz_btn)
-        # 兩 repo 模式：測試執行（dry-run）按鈕 —— 僅在已建 Repo B 時顯示
+        # 兩 repo 模式：測試執行（dry-run）按鈕
         self.dryrun_btn = QPushButton("▶ 測試執行（dry-run，不下單）")
         self.dryrun_btn.clicked.connect(self._do_dryrun)
         self.dryrun_btn.setVisible(bool(self.config.get("repob_slug")))
