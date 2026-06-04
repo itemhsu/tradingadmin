@@ -31,8 +31,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {{ python-version: "3.11" }}
-      - name: Install engine (vendored wheel)
-        run: pip install vendor/{wheel}
+      - name: Install engine (public repo, no token)
+        run: pip install "tech-rebalance @ git+https://github.com/itemhsu/tech-rebalance-pub@{version}"
       - name: Run all accounts
         env:
           ACC1_ALPACA_KEY:    ${{{{ secrets.ACC1_ALPACA_KEY }}}}
@@ -48,6 +48,7 @@ jobs:
             run-account --account all
           fi
       - name: Commit data
+        if: ${{{{ inputs.dry_run != true }}}}   # dry-run 不 commit（避免污染冪等守門）
         run: |
           git config user.name  "Daily Bot"
           git config user.email "bot@users.noreply.github.com"
@@ -59,10 +60,10 @@ jobs:
 """
 
 
-def build_template_files(wheel_name: str, wheel_bytes: bytes,
+def build_template_files(engine_version: str,
                          account_id: str = "1", strategy: str = "top10",
                          email: str = "you@example.com") -> Dict[str, bytes]:
-    """組出 Repo B 初始檔案（path → bytes）。不含任何金鑰。"""
+    """組出 Repo B 初始檔案（path → bytes）。引擎用 git+ 從公開 repo 安裝，無金鑰、無 wheel。"""
     accounts = {
         "accounts": [{
             "id": account_id, "strategy": strategy, "label": "我的帳戶",
@@ -72,13 +73,12 @@ def build_template_files(wheel_name: str, wheel_bytes: bytes,
             "email_recipients": [email],
         }]
     }
-    daily = _DAILY_YML.format(wheel=wheel_name)
+    daily = _DAILY_YML.format(version=engine_version)
     return {
         "accounts.json": (json.dumps(accounts, ensure_ascii=False, indent=2) + "\n").encode(),
         "data/.gitkeep": b"",
         ".github/workflows/daily.yml": daily.encode(),
-        f"vendor/{wheel_name}": wheel_bytes,
-        "README.md": b"# Repo B - thin shell\n",
+        "README.md": "# Repo B - thin shell\n\n引擎以 git+ 從 tech-rebalance-pub 安裝（免 token）。\n".encode(),
     }
 
 

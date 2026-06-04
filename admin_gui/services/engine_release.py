@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
 
-ENGINE_REPO = "itemhsu/tech-rebalance"
+ENGINE_REPO = "itemhsu/tech-rebalance-pub"
 _WHEEL_RE = re.compile(r"tech_rebalance-([0-9][0-9.]*)-py3-none-any\.whl")
 
 
@@ -52,3 +52,17 @@ def pinned_version(daily_yml_text: str) -> Optional[str]:
 def bump_daily(daily_yml_text: str, new_version: str) -> str:
     """把 daily.yml 內的 wheel 檔名換成新版本。"""
     return _WHEEL_RE.sub(wheel_name(new_version), daily_yml_text)
+
+
+_GIT_PIN_RE = re.compile(r"tech-rebalance-pub@(v?[0-9][0-9.]*)")
+
+
+def pinned_git_version(daily_yml_text: str):
+    """從 daily.yml 的 git+ 安裝行解析釘的引擎版本（如 v1.0.6）。"""
+    m = _GIT_PIN_RE.search(daily_yml_text)
+    return m.group(1) if m else None
+
+
+def bump_git_version(daily_yml_text: str, new_version: str) -> str:
+    """把 daily.yml git+ 安裝行的 @vX 換成新版本。"""
+    return _GIT_PIN_RE.sub(f"tech-rebalance-pub@{new_version}", daily_yml_text)

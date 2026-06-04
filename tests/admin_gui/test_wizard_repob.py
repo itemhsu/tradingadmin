@@ -45,19 +45,17 @@ def test_build_repob_calls_provision(qapp, monkeypatch, tmp_path):
     _yes(monkeypatch)
     from admin_gui.services import engine_release as er
     from admin_gui.services import repo_b_provisioner as pv
-    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.4", "v1.0.3"])
-
-    def fake_dl(version, dest, repo):
-        (Path(dest) / "tech_rebalance-1.0.4-py3-none-any.whl").write_bytes(b"WHEEL")
-        return "tech_rebalance-1.0.4-py3-none-any.whl"
-    monkeypatch.setattr(er, "download_wheel", fake_dl)
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6", "v1.0.5"])
     captured = {}
     monkeypatch.setattr(pv, "provision",
                         lambda slug, files, **k: captured.update(slug=slug, files=files) or {"ok": True})
     w._do_build_repob()
     assert captured["slug"] == "alice/tech-rebalance-data"
     assert ".github/workflows/daily.yml" in captured["files"]
-    assert "vendor/tech_rebalance-1.0.4-py3-none-any.whl" in captured["files"]
+    # git+ 安裝公開引擎：不再 vendor wheel
+    assert not any(p.startswith("vendor/") for p in captured["files"])
+    daily = captured["files"][".github/workflows/daily.yml"].decode("utf-8")
+    assert "git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6" in daily
     assert cfg.get("repob_slug") == "alice/tech-rebalance-data"   # 記住 Repo B
 
 
@@ -83,19 +81,15 @@ def test_build_repob_no_versions_warns(qapp, monkeypatch, tmp_path):
     assert called["n"] == 0       # 列不到版本 → 不繼續
 
 
-def test_update_engine_pushes_new_wheel(qapp, monkeypatch, tmp_path):
+def test_update_engine_bumps_git_pin(qapp, monkeypatch, tmp_path):
     wz, w, cfg = _wizard(monkeypatch, tmp_path)
     cfg.set("repob_slug", "alice/tech-rebalance-data")
     _yes(monkeypatch)
     from admin_gui.services import engine_release as er
-    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.5"])
-
-    def fake_dl(version, dest, repo):
-        (Path(dest) / "tech_rebalance-1.0.5-py3-none-any.whl").write_bytes(b"W")
-        return "tech_rebalance-1.0.5-py3-none-any.whl"
-    monkeypatch.setattr(er, "download_wheel", fake_dl)
+    monkeypatch.setattr(er, "list_versions", lambda repo: ["v1.0.6"])
     daily_b64 = base64.b64encode(
-        b"run: pip install vendor/tech_rebalance-1.0.4-py3-none-any.whl").decode()
+        b'run: pip install "tech-rebalance @ '
+        b'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.5"').decode()
     calls = []
     def fake_gh(args, inp=None, **k):
         calls.append((args, inp))
@@ -106,6 +100,11 @@ def test_update_engine_pushes_new_wheel(qapp, monkeypatch, tmp_path):
         return (0, "", "")
     monkeypatch.setattr(wz, "_gh", fake_gh)
     w._do_update_engine()
-    puts = [a for a, _ in calls if "PUT" in a]
-    assert any("vendor/tech_rebalance-1.0.5" in " ".join(a) for a in puts)
-    assert any("daily.yml" in " ".join(a) for a in puts)
+    puts = [(a, inp) for a, inp in calls if "PUT" in a]
+    assert len(puts) == 1                                   # 只動 daily.yml，不推 wheel
+    args, inp = puts[0]
+    assert "daily.yml" in " ".join(args)
+    assert not any("vendor/" in " ".join(a) for a, _ in puts)
+    pushed = base64.b64decode(__import__("json").loads(inp)["content"]).decode()
+    assert "tech-rebalance-pub@v1.0.6" in pushed
+    assert "v1.0.5" not in pushed

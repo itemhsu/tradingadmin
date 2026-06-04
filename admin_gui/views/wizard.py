@@ -24,9 +24,9 @@ _TEMPLATE = "itemhsu/tech-rebalance"
 _REPO_NAME = _TEMPLATE.split("/")[-1]
 # 線上儀表板（Pages）在「另一個 public repo」，不是引擎 repo
 _DASHBOARD_REPO = "tech-rebalance-dashboard"
-# 兩 repo 架構：使用者的薄殼 Repo B（設定+資料，引擎用 vendored wheel）
+# 兩 repo 架構：使用者的薄殼 Repo B（設定+資料，引擎以 git+ 從公開 repo 安裝，免 token）
 _REPOB_NAME = "tech-rebalance-data"
-_ENGINE_REPO = "itemhsu/tech-rebalance"
+_ENGINE_REPO = "itemhsu/tech-rebalance-pub"
 
 
 def is_first_run(config: GlobalConfig) -> bool:
@@ -276,25 +276,20 @@ class SetupWizard(QDialog):
             QMessageBox.warning(self, "缺帳號", "請先填入 GitHub 帳號。"); return
         if QMessageBox.question(
                 self, "建立交易系統",
-                f"將建立 private repo {slug}（薄殼：設定+資料+引擎 wheel）。\n"
+                f"將建立 private repo {slug}（薄殼：設定+資料；引擎以 git+ 從公開 repo 安裝，免 token）。\n"
                 "之後你只需在它的 Settings 設 Alpaca 金鑰。要繼續嗎？"
         ) != QMessageBox.Yes:
             return
         versions = er.list_versions(_ENGINE_REPO)
         if not versions:
             QMessageBox.warning(self, "找不到引擎版本",
-                                "無法列出引擎 Release，請確認 gh 已登入且有讀取權限。"); return
+                                "無法列出公開引擎 Release，請確認 gh 已登入。"); return
         latest = versions[0]
-        with tempfile.TemporaryDirectory() as td:
-            wheel = er.download_wheel(latest, td, _ENGINE_REPO)
-            if not wheel:
-                QMessageBox.warning(self, "下載失敗", f"無法下載引擎 {latest} 的 wheel。"); return
-            wheel_bytes = (Path(td) / wheel).read_bytes()
-        files = pv.build_template_files(wheel, wheel_bytes)
+        files = pv.build_template_files(latest)   # git+ 安裝，不下載 wheel
         res = pv.provision(slug, files)
         if res["ok"]:
             QMessageBox.information(self, "建立完成",
-                f"{slug} 已建立並放好引擎 {latest}。\n"
+                f"{slug} 已建立（引擎釘 {latest}，git+ 安裝公開引擎）。\n"
                 "下一步：到該 repo Settings → Secrets 設 ACC1_ALPACA_KEY / ACC1_ALPACA_SECRET。")
             self.config.set("repob_slug", slug)
         else:
@@ -302,26 +297,20 @@ class SetupWizard(QDialog):
 
     # ── Ⓑ 更新引擎版本 ──────────────────────────────────────────────────
     def _do_update_engine(self):
-        import base64 as _b64, json as _json, tempfile
-        from pathlib import Path
+        import base64 as _b64, json as _json
         from admin_gui.services import engine_release as er
         slug = self.config.get("repob_slug") or self._repob_slug()
         if not slug:
             QMessageBox.warning(self, "缺 Repo B", "請先建立交易系統（Ⓐ）。"); return
         versions = er.list_versions(_ENGINE_REPO)
         if not versions:
-            QMessageBox.warning(self, "找不到引擎版本", "無法列出引擎 Release。"); return
+            QMessageBox.warning(self, "找不到引擎版本", "無法列出公開引擎 Release。"); return
         latest = versions[0]
         if QMessageBox.question(
                 self, "更新引擎",
-                f"將把 {slug} 的引擎更新到 {latest}。要繼續嗎？") != QMessageBox.Yes:
+                f"將把 {slug} 的引擎更新到 {latest}（改 daily.yml 的 git+ 釘版，免 wheel）。要繼續嗎？") != QMessageBox.Yes:
             return
-        # 讀現有 daily.yml → bump → 推新 wheel + 新 daily.yml
-        with tempfile.TemporaryDirectory() as td:
-            wheel = er.download_wheel(latest, td, _ENGINE_REPO)
-            if not wheel:
-                QMessageBox.warning(self, "下載失敗", f"無法下載 {latest} 的 wheel。"); return
-            wheel_bytes = (Path(td) / wheel).read_bytes()
+        # 讀現有 daily.yml → 換 git+ 的 @vX → 推回（只動一個檔）
         code, daily_text, _ = _gh(["api",
             f"repos/{slug}/contents/.github/workflows/daily.yml", "--jq", ".content"])
         if code != 0:
@@ -330,21 +319,17 @@ class SetupWizard(QDialog):
             daily = _b64.b64decode(daily_text).decode("utf-8")
         except Exception:  # noqa: BLE001
             daily = ""
-        new_daily = er.bump_daily(daily, latest)
-        # 推新 wheel
-        for path, content in ((f"vendor/{wheel}", wheel_bytes),
-                              (".github/workflows/daily.yml", new_daily.encode())):
-            payload = _json.dumps({"message": f"update engine → {latest}",
-                                   "content": _b64.b64encode(content).decode()})
-            # 既有檔需帶 sha
-            c2, meta, _ = _gh(["api", f"repos/{slug}/contents/{path}", "--jq", ".sha"])
-            if c2 == 0 and meta.strip():
-                payload = _json.dumps({"message": f"update engine → {latest}",
-                                       "content": _b64.b64encode(content).decode(),
-                                       "sha": meta.strip()})
-            _gh(["api", "-X", "PUT", f"repos/{slug}/contents/{path}", "--input", "-"], inp=payload)
+        new_daily = er.bump_git_version(daily, latest)
+        path = ".github/workflows/daily.yml"
+        c2, meta, _ = _gh(["api", f"repos/{slug}/contents/{path}", "--jq", ".sha"])
+        body = {"message": f"update engine → {latest}",
+                "content": _b64.b64encode(new_daily.encode()).decode()}
+        if c2 == 0 and meta.strip():
+            body["sha"] = meta.strip()
+        _gh(["api", "-X", "PUT", f"repos/{slug}/contents/{path}", "--input", "-"],
+            inp=_json.dumps(body))
         QMessageBox.information(self, "更新完成",
-            f"{slug} 的引擎已更新到 {latest}（新 wheel + daily.yml）。")
+            f"{slug} 的引擎已釘到 {latest}（git+ 安裝，免 token / 免 wheel）。")
 
     # ── 完成 ──────────────────────────────────────────────────────────
     def _finish(self):

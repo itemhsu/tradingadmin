@@ -92,6 +92,17 @@ def test_pinned_version_and_bump():
     assert "1.0.3" not in bumped
 
 
+def test_pinned_git_version_and_bump():
+    daily = ('      - name: Install engine (public repo, no token)\n'
+             '        run: pip install "tech-rebalance @ '
+             'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.5"\n')
+    assert er.pinned_git_version(daily) == "v1.0.5"
+    bumped = er.bump_git_version(daily, "v1.0.6")
+    assert "tech-rebalance-pub@v1.0.6" in bumped
+    assert "v1.0.5" not in bumped
+    assert er.pinned_git_version(bumped) == "v1.0.6"
+
+
 def test_list_versions_failure_empty():
     assert er.list_versions(runner=lambda *a, **k: R(1)) == []
 
@@ -129,10 +140,13 @@ def test_list_runs_and_view_log():
 
 # ── A. provisioner ───────────────────────────────────────────────────────────
 def test_build_template_files_shape_and_safety():
-    files = pv.build_template_files("tech_rebalance-1.0.4-py3-none-any.whl", b"WHEEL")
+    files = pv.build_template_files("v1.0.6")
     assert ".github/workflows/daily.yml" in files          # 巢狀路徑
-    assert "vendor/tech_rebalance-1.0.4-py3-none-any.whl" in files
-    assert files["vendor/tech_rebalance-1.0.4-py3-none-any.whl"] == b"WHEEL"
+    # 不再 vendor wheel：以 git+ 從公開 repo 安裝
+    assert not any(p.startswith("vendor/") for p in files)
+    daily = files[".github/workflows/daily.yml"].decode("utf-8")
+    assert "git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6" in daily
+    assert ".whl" not in daily                              # 無 wheel 安裝
     accts = json.loads(files["accounts.json"])
     assert accts["accounts"][0]["strategy"] == "top10"
     # 安全：任何檔案不得含金鑰樣字
