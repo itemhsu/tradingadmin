@@ -94,5 +94,5 @@ def test_wizard_apply_mode_hides_rows(monkeypatch, tmp_path):
     assert w.repob_row["widget"].isHidden() is False
 
     w._apply_mode(md.UNKNOWN)
-    assert w.fork_row["widget"].isHidden() is False         # 未知→全顯
-    assert w.repob_row["widget"].isHidden() is False
+    assert w.fork_row["widget"].isHidden() is True          # 未知→預設走兩-repo
+    assert w.repob_row["widget"].isHidden() is False        # 只顯示新路線

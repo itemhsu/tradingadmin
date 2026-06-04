@@ -18,7 +18,7 @@ def detect_mode(store) -> str:
       - 有 vendor/*.whl ── 舊版 vendored wheel 薄殼
       - 有 accounts.json 但「無」runner.py（引擎碼不在 repo 內）
     fork（含引擎碼）：有 runner.py。
-    皆無 → unknown（精靈全顯）。
+    皆無 → unknown（精靈預設走兩-repo 路線，不顯示舊 fork 步驟）。
     """
     # 新版薄殼：daily.yml 以 git+ 釘公開引擎
     try:

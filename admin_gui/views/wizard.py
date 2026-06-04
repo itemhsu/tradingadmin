@@ -115,12 +115,18 @@ class SetupWizard(QDialog):
         return {"icon": icon, "status": status, "btn": btn, "action": action_text, "widget": row}
 
     def _apply_mode(self, mode):
-        """依模式顯示對應步驟：fork 顯示舊步驟、repo_b 顯示新步驟、unknown 全顯。"""
+        """依模式顯示對應步驟。
+
+        兩-repo 是預設路線：只有「明確偵測到 fork」(repo 內含引擎碼) 才顯示舊
+        fork 步驟；repo_b 與 unknown 一律只顯示新的兩-repo 步驟，避免兩套心智
+        模型同畫面混搭。
+        """
         from admin_gui.services import mode_detect as md
+        is_fork = (mode == md.FORK)
         for r in self._fork_rows:
-            r["widget"].setVisible(mode != md.REPO_B)
+            r["widget"].setVisible(is_fork)
         for r in self._repob_rows:
-            r["widget"].setVisible(mode != md.FORK)
+            r["widget"].setVisible(not is_fork)
 
     def _initial_user(self) -> str:
         slug = self.config.get("repo_slug")
