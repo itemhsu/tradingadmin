@@ -209,6 +209,48 @@ def trigger_test_email(repo: str = "itemhsu/tech-rebalance", runner=None) -> Tup
     return True, "已觸發測試發信，約 20–40 秒後按『查看結果』"
 
 
+_SEND_LOG_MAX = 50000   # workflow_dispatch input 上限 65535，留餘裕
+
+
+def trigger_send_log(repo: str, body: str, who: str = "", runner=None) -> Tuple[bool, str]:
+    """觸發 send_log.yml：把 log 內容當 input 傳給雲端 workflow，由它用
+    EMAIL_SENDER/EMAIL_PASSWORD secret（雲端 SMTP，已證可用）寄給開發者。
+    本機不需任何密碼。body 過長則截尾（保留最新）。"""
+    import subprocess
+    run = runner or subprocess.run
+    if len(body) > _SEND_LOG_MAX:
+        body = "（前段已截斷，僅保留最新部分）\n" + body[-_SEND_LOG_MAX:]
+    r = run(["gh", "workflow", "run", "send_log.yml", "--repo", repo,
+             "--field", f"body={body}", "--field", f"who={who}"],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout)[:200]
+        if "Workflow does not have" in err or "not found" in err.lower():
+            return False, ("repo 還沒有 send_log.yml workflow —— 請先到「總覽」按"
+                           "『重新執行設定精靈』修復交易系統（會補上此 workflow）。")
+        return False, f"觸發失敗：{err}"
+    return True, "已觸發雲端寄送 log，約 20–40 秒寄達"
+
+
+def last_send_log_result(repo: str, runner=None) -> Tuple[str, str]:
+    """讀 send_log.yml 最新一次 run 的 (status, conclusion)。"""
+    import json
+    import subprocess
+    run = runner or subprocess.run
+    r = run(["gh", "run", "list", "--workflow", "send_log.yml", "--repo", repo,
+             "--limit", "1", "--json", "status,conclusion"],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        return "unknown", ""
+    try:
+        data = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        return "unknown", ""
+    if not data:
+        return "none", ""
+    return data[0].get("status", "unknown"), data[0].get("conclusion", "")
+
+
 def last_test_email_result(repo: str = "itemhsu/tech-rebalance", runner=None) -> Tuple[str, str]:
     """讀 test_email.yml 最新一次 run 的狀態。回 (status, conclusion)。"""
     import json
@@ -229,13 +271,13 @@ def last_test_email_result(repo: str = "itemhsu/tech-rebalance", runner=None) ->
 
 
 def last_test_email_failure_reason(repo: str = "itemhsu/tech-rebalance",
-                                   runner=None) -> str:
-    """抓 test_email.yml 最新失敗 run 的 log，回傳 python 印的 FAIL/錯誤行。
+                                   runner=None, workflow: str = "test_email.yml") -> str:
+    """抓指定 workflow 最新失敗 run 的 log，回傳 python 印的 FAIL/錯誤行。
     讀不到回空字串（呼叫端顯示通用訊息）。杜絕安靜失敗——把真正原因撈出來。"""
     import json
     import subprocess
     run = runner or subprocess.run
-    r = run(["gh", "run", "list", "--workflow", "test_email.yml", "--repo", repo,
+    r = run(["gh", "run", "list", "--workflow", workflow, "--repo", repo,
              "--limit", "1", "--json", "databaseId"],
             capture_output=True, text=True)
     if r.returncode != 0:

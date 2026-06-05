@@ -208,44 +208,48 @@ class LogView(QWidget):
 
     # ── 📧 發送 log ───────────────────────────────────────────────────────
     def _send_log(self):
-        from pathlib import Path
+        """真的把 log email 出去——走雲端 send_log.yml（用 GitHub secret 的 SMTP，
+        本機不需密碼）。觸發後輪詢結果，成功/失敗都回報。"""
         from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import QTimer
         from admin_gui.services.action_log import LOG, env_snapshot
         from admin_gui.services import probes
-        from admin_gui.services.global_config import GlobalConfig
 
-        with LOG.action("發送 log email", ctx=self.repo_slug) as a:
+        with LOG.action("發送 log（雲端 email）", ctx=self.repo_slug) as a:
             body = (f"# TradingAdmin 動作日誌\n{env_snapshot(self.repo_slug)}\n"
                     + "=" * 50 + "\n" + LOG.tail_text(500))   # tail_text 已遮罩金鑰
             a.step("組裝 log", "ok", f"{len(body)} bytes")
-            cfg = GlobalConfig()
-            sender = cfg.get("email_sender") or ""
-            # EMAIL_PASSWORD 在 GitHub secret，本機沒有 → 後援：存桌面檔
-            pw = cfg.get("email_password_local") or ""
-            if sender and pw:
-                ok, msg = probes.send_log_to_dev(
-                    sender, pw, body,
-                    subject=f"[TradingAdmin log] {probes.gh_login() or '?'}")
-                a.step("SMTP 寄送", "ok" if ok else "fail", msg)
-                dlg = (QMessageBox.information if ok else QMessageBox.warning)
-                dlg(self, "發送 log", msg)
+            who = probes.gh_login() or "?"
+            ok, msg = probes.trigger_send_log(self.repo_slug, body, who=who)
+            a.step("觸發 send_log.yml", "ok" if ok else "fail", msg)
+            if not ok:
+                QMessageBox.warning(self, "發送 log 失敗", msg)
                 return
-            # 沒有本機 SMTP 密碼是正常的：密碼放在 GitHub secret（讀不回本機）。
-            # 「測試發信」能成功是因為它走雲端 workflow，與本機寄信無關。
-            # 後援：存桌面檔（視為正常完成，非失敗）。
-            dest = Path.home() / "Desktop" / "tradingadmin-log.txt"
-            try:
-                dest.write_text(body, encoding="utf-8")
-                a.step("存檔（本機無寄信密碼，改存檔）", "ok", str(dest))
-                QMessageBox.information(
-                    self, "已存檔",
-                    f"log 已存到：\n{dest}\n\n"
-                    f"（本機沒有寄信密碼——密碼在 GitHub secret，讀不回本機；\n"
-                    f"「測試發信」能成功是走雲端，與此不同。）\n\n"
-                    f"想自己挑存檔位置可用「⬇ 下載 log」；要寄給開發者請把檔附給 itemhsu@gmail.com。")
-            except Exception as e:  # noqa: BLE001
-                a.step("存檔", "fail", f"{type(e).__name__}: {str(e)[:120]}")
-                QMessageBox.warning(self, "失敗", f"連存檔都失敗：{e}")
+        QMessageBox.information(self, "發送 log",
+            "已觸發雲端寄送，約 20–40 秒會寄到 itemhsu@gmail.com。\n結果會顯示在日誌。")
+        # 輪詢結果
+        self._sendlog_secs = 0
+        self._sendlog_timer = QTimer(self)
+        self._sendlog_timer.setInterval(5000)
+        self._sendlog_timer.timeout.connect(self._sendlog_poll)
+        self._sendlog_timer.start()
+
+    def _sendlog_poll(self):
+        from admin_gui.services.action_log import LOG
+        from admin_gui.services import probes
+        self._sendlog_secs += 5
+        status, concl = probes.last_send_log_result(self.repo_slug)
+        if concl == "success":
+            self._sendlog_timer.stop()
+            LOG.note("send_log 結果", "ok", f"成功（{self._sendlog_secs}s）— 已寄至 itemhsu@gmail.com")
+        elif concl in ("failure", "cancelled", "timed_out"):
+            self._sendlog_timer.stop()
+            reason = probes.last_test_email_failure_reason(
+                self.repo_slug, workflow="send_log.yml")
+            LOG.note("send_log 結果", "fail", f"{concl}: {reason or '(讀不到 log)'}")
+        elif self._sendlog_secs >= 90:
+            self._sendlog_timer.stop()
+            LOG.note("send_log 結果", "warn", "等待逾時（90s），請到 Actions 看 send_log")
 
     # ── 下載 log ─────────────────────────────────────────────────────────
     def _download_log(self, run_id: int):
