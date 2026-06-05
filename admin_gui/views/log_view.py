@@ -1,6 +1,7 @@
 """admin_gui/views/log_view.py — 全域日誌分頁（第四 tab）。
 
-合併顯示：排程執行（gh run，含線上連結＋下載）＋ 操作日誌（audit）。
+合併顯示：排程執行（gh run，含線上連結＋下載）＋ 動作日誌（action_log）。
+動作日誌依時間序，新事件在最後；不再附舊 audit 摘要段落。
 每筆排程執行提供「線上查看」與「下載 log」兩個動作。
 """
 from __future__ import annotations
@@ -15,7 +16,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-from admin_gui.services.audit_log import AuditLog
 from admin_gui.services import log_reader
 
 _ICON = {"success": "✅", "failure": "❌", "cancelled": "⛔",
@@ -26,7 +26,6 @@ class LogView(QWidget):
     def __init__(self, repo_slug: str = "itemhsu/tech-rebalance", parent=None):
         super().__init__(parent)
         self.repo_slug = repo_slug
-        self.audit = AuditLog()
 
         v = QVBoxLayout(self)
         v.setSpacing(8)
@@ -137,19 +136,15 @@ class LogView(QWidget):
             self.run_table.setCellWidget(row, 4, dl_btn)
 
     def _fill_audit(self):
-        """顯示新的 action_log（密集步驟，含 env/gh rc/失敗原因）+ 舊 audit 摘要。"""
+        """只顯示 action_log（每步驟細節，時間序：新的在最後）。不再附 audit 段落。"""
+        from PySide6.QtGui import QTextCursor
         from admin_gui.services.action_log import LOG
-        parts = []
-        action_text = LOG.tail_text(300)
-        if action_text.strip():
-            parts.append(action_text.strip())
-        # 舊 audit（帳戶 CRUD / set_secret 等）附在後面
-        old = [f"{e['ts'][5:16]}  {e['action']}  {e['target']}  {e['result']}"
-               for e in self.audit.read(limit=30)]
-        if old:
-            parts.append("── 操作摘要（audit）──\n" + "\n".join(old))
+        action_text = LOG.tail_text(300).strip()   # tail 依檔案順序＝時間序，新事件在最後
         self.audit_box.setPlainText(
-            "\n\n".join(parts) if parts else "（尚無記錄。執行任何操作後會出現於此）")
+            action_text or "（尚無記錄。執行任何操作後會出現於此）")
+        # 捲到最底，讓最新事件可見
+        self.audit_box.moveCursor(QTextCursor.End)
+        self.audit_box.ensureCursorVisible()
 
     # ── 🗑 清除 log ───────────────────────────────────────────────────────
     def _clear_log(self):

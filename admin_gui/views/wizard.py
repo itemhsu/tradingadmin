@@ -154,12 +154,16 @@ class SetupWizard(QDialog):
             self.user_edit.setText(out)
 
     def _gh_login(self):
-        try:
-            subprocess.Popen(["gh", "auth", "login", "--web"])
-            QMessageBox.information(self, "授權中",
-                "已開啟 gh 登入流程，請依指示完成後回來按「↻ 重新檢查狀態」。")
-        except FileNotFoundError:
-            QMessageBox.warning(self, "找不到 gh", "請先安裝 GitHub CLI（gh）。")
+        from admin_gui.services.action_log import LOG
+        with LOG.action("登入 GitHub（gh auth login）") as a:
+            try:
+                subprocess.Popen(["gh", "auth", "login", "--web"])
+                a.step("開啟 gh auth login --web", "ok", "已啟動瀏覽器授權流程")
+                QMessageBox.information(self, "授權中",
+                    "已開啟 gh 登入流程，請依指示完成後回來按「↻ 重新檢查狀態」。")
+            except FileNotFoundError:
+                a.step("開啟 gh auth login", "fail", "找不到 gh（GitHub CLI 未安裝）")
+                QMessageBox.warning(self, "找不到 gh", "請先安裝 GitHub CLI（gh）。")
         self._refresh_gh()
 
     # ── 狀態檢查（冪等防呆）─────────────────────────────────────────────
@@ -353,6 +357,12 @@ class SetupWizard(QDialog):
 
     # ── 更新引擎版本 ─────────────────────────────────────────────────────
     def _do_update_engine(self):
+        """包一層 action_log（裡面的 _gh() 呼叫會自動歸進此 action）。"""
+        from admin_gui.services.action_log import LOG
+        with LOG.action("更新引擎版本", ctx=self._repob_slug()):
+            self._do_update_engine_impl()
+
+    def _do_update_engine_impl(self):
         """掃 Repo B 所有 workflow，找到含 pip install 的那個，遷移或 bump 到最新 pub engine。
 
         支援兩種情況：

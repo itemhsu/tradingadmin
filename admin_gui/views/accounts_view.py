@@ -284,12 +284,17 @@ class AccountsView(QWidget):
             self.refresh()
 
     def _delete(self):
+        from admin_gui.services.action_log import LOG
         acc_id = self._selected_id()
         if not acc_id:
             return
         acc = self.repo.get(acc_id) or {}
         if QMessageBox.question(self, "刪除確認",
             f"刪除「{acc.get('label')}」？\n• 從 accounts.json 移除\n"
-            f"• 保留 {acc.get('data_dir')}/ 歷史") == QMessageBox.Yes:
+            f"• 保留 {acc.get('data_dir')}/ 歷史") != QMessageBox.Yes:
+            return
+        with LOG.action("刪除帳戶", ctx=getattr(self, "repo_slug", "")) as a:
+            a.step("目標", "ok", f"id={acc_id} label={acc.get('label')}")
             self.repo.delete(acc_id)
-            self.refresh()
+            a.step("從 accounts.json 移除", "ok", f"id={acc_id}（保留 {acc.get('data_dir')}/）")
+        self.refresh()

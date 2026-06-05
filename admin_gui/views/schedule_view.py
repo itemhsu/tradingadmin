@@ -133,10 +133,15 @@ class ScheduleView(QWidget):
         dlg = DiffDialog(f"將更新排程：{Path(wf).name}", preview, self)
         if dlg.exec() != QDialog.Accepted:
             return
-        try:
-            msg = self.store.write_text(
-                wf, new_text, f"chore(schedule): {Path(wf).name} cron → {new_expr}")
-            QMessageBox.information(self, "完成", msg)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "寫入失敗", str(e))
+        from admin_gui.services.action_log import LOG
+        with LOG.action("修改排程 cron", ctx=getattr(self, "repo_slug", "")) as a:
+            a.step("變更", "ok", f"{Path(wf).name}: {old_expr} → {new_expr}")
+            try:
+                msg = self.store.write_text(
+                    wf, new_text, f"chore(schedule): {Path(wf).name} cron → {new_expr}")
+                a.step("寫回 GitHub", "ok", msg)
+                QMessageBox.information(self, "完成", msg)
+            except Exception as e:  # noqa: BLE001
+                a.step("寫回 GitHub", "fail", f"{type(e).__name__}: {str(e)[:160]}")
+                QMessageBox.warning(self, "寫入失敗", str(e))
         self.refresh()
