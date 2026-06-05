@@ -134,7 +134,7 @@ class AccountDialog(QDialog):
             has_input = any(values.values())
             # 半遮罩記每把金鑰的形狀（除錯：看得出有沒有貼空/貼錯長度）
             a.step("金鑰形狀", "ok", " ".join(
-                f"{k}={half_mask(v)}" for k, v in values.items()) or "(無)")
+                f"{k}▸{half_mask(v)}" for k, v in values.items()) or "(無)")
 
             # 新帳戶必須輸入並通過金鑰測試才能建立（避免存進未驗證的壞帳戶）
             if not has_input and not self.original:

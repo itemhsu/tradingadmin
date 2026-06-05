@@ -48,6 +48,11 @@ class LogView(QWidget):
         clr_btn.clicked.connect(self._clear_log)
         bar.addWidget(clr_btn)
 
+        dl_btn = QPushButton("⬇ 下載 log")
+        dl_btn.setToolTip("把目前的動作日誌存成 .txt（你自己挑位置，永遠是最新內容）")
+        dl_btn.clicked.connect(self._download_action_log)
+        bar.addWidget(dl_btn)
+
         send_btn = QPushButton("📧 發送 log")
         send_btn.setToolTip("把本機動作日誌寄給開發者（itemhsu@gmail.com）以便診斷")
         send_btn.clicked.connect(self._send_log)
@@ -96,7 +101,23 @@ class LogView(QWidget):
         self.audit_box.setSizePolicy(sp2)
         v.addWidget(self.audit_box)
 
+        # 即時更新：訂閱 action_log，任何新事件都馬上重畫動作日誌框
+        # （否則框只在建立/按↻ 時填一次，之後的操作雖有寫入 jsonl 卻看不到）
+        from admin_gui.services.action_log import LOG
+        LOG.subscribe(self._on_log_record)
+
         self.refresh()
+
+    def _on_log_record(self, record: dict):
+        """action_log 有新紀錄 → 重畫動作日誌框（只重畫文字框，不重打 gh 排程表）。"""
+        try:
+            self._fill_audit()
+        except Exception:   # noqa: BLE001  更新顯示失敗不可影響主流程
+            pass
+
+    def showEvent(self, e):   # noqa: N802  切到本分頁時也刷新一次
+        super().showEvent(e)
+        self._fill_audit()
 
     # ── 填表 ──────────────────────────────────────────────────────────────
     def refresh(self):
@@ -163,6 +184,28 @@ class LogView(QWidget):
         self.refresh()
         QMessageBox.information(self, "已清除", f"已清空 {n} 行動作日誌。")
 
+    # ── ⬇ 下載 log（存當下最新內容成 .txt）──────────────────────────────────
+    def _download_action_log(self):
+        from pathlib import Path
+        from datetime import datetime
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from admin_gui.services.action_log import LOG, env_snapshot
+        body = (f"# TradingAdmin 動作日誌\n{env_snapshot(self.repo_slug)}\n"
+                + "=" * 50 + "\n" + LOG.tail_text(1000))
+        default = str(Path.home() / "Desktop" /
+                      f"tradingadmin-log-{datetime.now():%Y%m%d-%H%M%S}.txt")
+        path, _ = QFileDialog.getSaveFileName(self, "下載 log 成 .txt", default, "文字檔 (*.txt)")
+        if not path:
+            return
+        with LOG.action("下載 log") as a:
+            try:
+                Path(path).write_text(body, encoding="utf-8")
+                a.step("存檔", "ok", path)
+                QMessageBox.information(self, "已存檔", f"log 已存到：\n{path}")
+            except Exception as e:  # noqa: BLE001
+                a.step("存檔", "fail", f"{type(e).__name__}: {str(e)[:120]}")
+                QMessageBox.warning(self, "失敗", f"存檔失敗：{e}")
+
     # ── 📧 發送 log ───────────────────────────────────────────────────────
     def _send_log(self):
         from pathlib import Path
@@ -187,17 +230,21 @@ class LogView(QWidget):
                 dlg = (QMessageBox.information if ok else QMessageBox.warning)
                 dlg(self, "發送 log", msg)
                 return
-            # 後援：存桌面檔，請使用者手動寄
+            # 沒有本機 SMTP 密碼是正常的：密碼放在 GitHub secret（讀不回本機）。
+            # 「測試發信」能成功是因為它走雲端 workflow，與本機寄信無關。
+            # 後援：存桌面檔（視為正常完成，非失敗）。
             dest = Path.home() / "Desktop" / "tradingadmin-log.txt"
             try:
                 dest.write_text(body, encoding="utf-8")
-                a.step("存桌面檔（無 SMTP 密碼）", "warn", str(dest))
+                a.step("存檔（本機無寄信密碼，改存檔）", "ok", str(dest))
                 QMessageBox.information(
-                    self, "已存檔（需手動寄）",
-                    f"目前沒有可寄信的密碼，log 已存到：\n{dest}\n\n"
-                    f"請手動把這個檔寄給 itemhsu@gmail.com。")
+                    self, "已存檔",
+                    f"log 已存到：\n{dest}\n\n"
+                    f"（本機沒有寄信密碼——密碼在 GitHub secret，讀不回本機；\n"
+                    f"「測試發信」能成功是走雲端，與此不同。）\n\n"
+                    f"想自己挑存檔位置可用「⬇ 下載 log」；要寄給開發者請把檔附給 itemhsu@gmail.com。")
             except Exception as e:  # noqa: BLE001
-                a.step("存桌面檔", "fail", f"{type(e).__name__}: {str(e)[:120]}")
+                a.step("存檔", "fail", f"{type(e).__name__}: {str(e)[:120]}")
                 QMessageBox.warning(self, "失敗", f"連存檔都失敗：{e}")
 
     # ── 下載 log ─────────────────────────────────────────────────────────
