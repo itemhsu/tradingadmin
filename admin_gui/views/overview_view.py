@@ -289,7 +289,15 @@ class OverviewView(QWidget):
             self._log_line(f"✅ 正常（{self._poll_secs}s）— 測試信已寄出，請查收信箱")
         elif conclusion in ("failure", "cancelled", "timed_out"):
             self._poll.stop()
-            self._log_line(f"❌ 失敗（{conclusion}）— 多半是 App 密碼錯，請重設 EMAIL_PASSWORD")
+            # 杜絕安靜失敗：抓 run log 撈出真正原因，不再猜「多半是密碼錯」
+            reason = probes.last_test_email_failure_reason(repo=self.repo_slug)
+            from admin_gui.services.action_log import LOG
+            LOG.note("test_email run", "fail", f"{conclusion}: {reason or '(讀不到 log)'}")
+            if reason:
+                self._log_line(f"❌ 失敗（{conclusion}）真正原因：{reason}")
+            else:
+                self._log_line(f"❌ 失敗（{conclusion}）— 到 Actions 看 test_email 的 log；"
+                               "若是 App 密碼錯請重設 EMAIL_PASSWORD")
         elif self._poll_secs >= 120:
             self._poll.stop()
             self._log_line("⚠ 等待逾時（120s），請稍後重試或到 Actions 看 test_email")

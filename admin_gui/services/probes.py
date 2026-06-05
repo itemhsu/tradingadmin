@@ -212,3 +212,32 @@ def last_test_email_result(repo: str = "itemhsu/tech-rebalance", runner=None) ->
     if not data:
         return "none", ""
     return data[0].get("status", "unknown"), data[0].get("conclusion", "")
+
+
+def last_test_email_failure_reason(repo: str = "itemhsu/tech-rebalance",
+                                   runner=None) -> str:
+    """抓 test_email.yml 最新失敗 run 的 log，回傳 python 印的 FAIL/錯誤行。
+    讀不到回空字串（呼叫端顯示通用訊息）。杜絕安靜失敗——把真正原因撈出來。"""
+    import json
+    import subprocess
+    run = runner or subprocess.run
+    r = run(["gh", "run", "list", "--workflow", "test_email.yml", "--repo", repo,
+             "--limit", "1", "--json", "databaseId"],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        return ""
+    try:
+        rows = json.loads(r.stdout or "[]")
+        rid = rows[0]["databaseId"] if rows else None
+    except (json.JSONDecodeError, KeyError, IndexError):
+        return ""
+    if not rid:
+        return ""
+    lr = run(["gh", "run", "view", str(rid), "--repo", repo, "--log"],
+             capture_output=True, text=True)
+    log = (lr.stdout or "") + (lr.stderr or "")
+    # 撈我們在 workflow 印的 FAIL 行（或任何 Error/Traceback）
+    hits = [ln.strip() for ln in log.splitlines()
+            if ("FAIL" in ln or "Error" in ln or "Traceback" in ln
+                or "❌" in ln) and "##[" not in ln]
+    return " | ".join(hits[-3:])[:300] if hits else ""
