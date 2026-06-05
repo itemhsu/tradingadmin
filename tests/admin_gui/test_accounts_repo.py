@@ -76,9 +76,23 @@ def test_G02b_missing_required_rejected():
     assert any("broker" in e for e in errs)
 
 
-# ── G-03 ─────────────────────────────────────────────────────────────────
-def test_G03_catalog_dropdowns_from_dirs(tmp_root):
-    cat = Catalog(tmp_root)
+# ── G-03（catalog 從 pub manifest，不讀 Repo B；測試注入 manifest 離線）──────
+_MF = {
+    "brokers": {
+        "alpaca": {"auth": {"required_env": ["{PREFIX}_API_KEY", "{PREFIX}_API_SECRET"]},
+                   "environments": ["paper", "live"],
+                   "required_env": ["{PREFIX}_ALPACA_KEY", "{PREFIX}_ALPACA_SECRET"]},
+        "tradier": {"auth": {"method": "bearer_token",
+                             "required_env": ["{PREFIX}_API_KEY", "{PREFIX}_ACCOUNT_ID"]},
+                    "environments": ["sandbox", "live"],
+                    "required_env": ["{PREFIX}_API_KEY", "{PREFIX}_ACCOUNT_ID"]},
+    },
+    "strategies": ["top10", "d2p2t6"],
+}
+
+
+def test_G03_catalog_dropdowns_from_manifest():
+    cat = Catalog(manifest=_MF)
     assert "alpaca" in cat.list_brokers()
     assert "tradier" in cat.list_brokers()
     assert "broker-schema-v1" not in cat.list_brokers()
@@ -86,8 +100,8 @@ def test_G03_catalog_dropdowns_from_dirs(tmp_root):
     assert "top10" in cat.list_strategies()
 
 
-def test_G03b_required_secrets_derived(tmp_root):
-    cat = Catalog(tmp_root)
+def test_G03b_required_secrets_derived():
+    cat = Catalog(manifest=_MF)
     secs = cat.required_secrets("ACC6", "tradier")
     assert "ACC6_API_KEY" in secs
     assert "ACC6_ACCOUNT_ID" in secs
