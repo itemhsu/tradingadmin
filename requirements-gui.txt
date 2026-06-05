@@ -1,4 +1,6 @@
 # 管理 GUI 執行/打包相依（與交易系統 requirements.txt 分開）
 PySide6>=6.6
+# CA 憑證：打包成 .app 後系統找不到本機 CA → urllib/SMTP 改用 certifi 的 cacert.pem
+certifi>=2024.0.0
 # 打包用（選用）
 pyinstaller>=6.0

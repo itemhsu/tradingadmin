@@ -12,6 +12,20 @@ import urllib.request
 from typing import Optional, Tuple
 
 
+def _ssl_ctx() -> ssl.SSLContext:
+    """回傳帶 CA 憑證的 SSL context。
+
+    打包成 .app（PyInstaller）後，系統 OpenSSL 找不到本機 CA → urllib/SMTP 會
+    噴 CERTIFICATE_VERIFY_FAILED（unable to get local issuer certificate）。
+    改用 certifi 內附的 cacert.pem 即可解。certifi 缺席時退回系統預設。
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:   # noqa: BLE001
+        return ssl.create_default_context()
+
+
 def _dig(obj, dotted: str):
     """依 'a.b.c' 路徑取巢狀值；任何一層缺就回 None。"""
     cur = obj
@@ -42,7 +56,7 @@ def fetch_account_id(spec: dict, environment: str, api_key: str) -> Tuple[bool, 
         headers[k] = tpl.replace("{api_key}", api_key)
     try:
         req = urllib.request.Request(base.rstrip("/") + ep, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_ctx()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return False, f"取得帳號失敗：HTTP {e.code}" + (
@@ -90,7 +104,7 @@ def probe_broker(spec: dict, environment: str, api_key: str,
                              .replace("{account_id}", account_id or ""))
 
         req = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_ctx()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         bpath = (spec.get("response") or {}).get("balance") or {}
@@ -119,7 +133,7 @@ def probe_email(sender: str, app_password: str, recipient: str) -> Tuple[bool, s
            f"Subject: [測試] 交易系統管理控制台 連線測試\r\n\r\n"
            f"這是一封測試信，收到代表 Email 發送設定正確。")
     try:
-        ctx = ssl.create_default_context()
+        ctx = _ssl_ctx()
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as s:
             s.starttls(context=ctx)
             s.login(sender, app_password)
@@ -146,7 +160,7 @@ def send_log_to_dev(sender: str, app_password: str, body: str,
     msg["From"] = sender
     msg["To"] = to
     try:
-        ctx = ssl.create_default_context()
+        ctx = _ssl_ctx()
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as s:
             s.starttls(context=ctx)
             s.login(sender, app_password)

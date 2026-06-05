@@ -119,65 +119,81 @@ class AccountDialog(QDialog):
             "⚠ 真錢帳戶：每日 cron 會用真錢下單" if self.env_cmb.currentText() == "live" else "")
 
     def _test_and_save(self):
+        from admin_gui.services.action_log import LOG, half_mask
         name = self.name_edit.text().strip()
-        if not name:
-            self.status.setText("❌ 帳戶名稱必填"); return
         broker = self.broker_cmb.currentText()
-        spec = self.catalog.broker_spec(broker)
         env = self.env_cmb.currentText()
-        strat = self.strategy_cmb.currentText()
-        values = {k: e.text().strip() for k, e in self.cred_edits.items()}
-        has_input = any(values.values())
+        with LOG.action("測試連線並儲存", ctx=getattr(self, "repo_slug", "")) as a:
+            a.step("輸入", "ok", f"label={name or '(空)'} broker={broker} env={env}")
+            if not name:
+                a.step("驗證帳戶名稱", "fail", "帳戶名稱必填")
+                self.status.setText("❌ 帳戶名稱必填"); return
+            spec = self.catalog.broker_spec(broker)
+            strat = self.strategy_cmb.currentText()
+            values = {k: e.text().strip() for k, e in self.cred_edits.items()}
+            has_input = any(values.values())
+            # 半遮罩記每把金鑰的形狀（除錯：看得出有沒有貼空/貼錯長度）
+            a.step("金鑰形狀", "ok", " ".join(
+                f"{k}={half_mask(v)}" for k, v in values.items()) or "(無)")
 
-        # 新帳戶必須輸入並通過金鑰測試才能建立（避免存進未驗證的壞帳戶）
-        if not has_input and not self.original:
-            self.status.setText("❌ 新帳戶需輸入 API 金鑰並測試（未儲存）"); return
+            # 新帳戶必須輸入並通過金鑰測試才能建立（避免存進未驗證的壞帳戶）
+            if not has_input and not self.original:
+                a.step("前置檢查", "fail", "新帳戶需輸入 API 金鑰並測試")
+                self.status.setText("❌ 新帳戶需輸入 API 金鑰並測試（未儲存）"); return
 
-        if env == "live":
-            if QMessageBox.question(self, "真錢確認",
-                f"帳戶「{name}」將以【真錢 live】每日自動交易。確定？") != QMessageBox.Yes:
-                return
+            if env == "live":
+                if QMessageBox.question(self, "真錢確認",
+                    f"帳戶「{name}」將以【真錢 live】每日自動交易。確定？") != QMessageBox.Yes:
+                    a.step("真錢確認", "skip", "使用者取消")
+                    return
 
-        # 有填金鑰 → 測試連線（Tradier 先用 token 自動取 account_id）
-        if has_input:
-            self.status.setText("⏳ 測試連線中…"); self.repaint()
+            # 有填金鑰 → 測試連線（Tradier 先用 token 自動取 account_id）
             account_id = ""
-            if broker_creds.needs_account_discovery(spec) and values.get("API_KEY"):
-                ok, res = probes.fetch_account_id(spec, env, values["API_KEY"])
-                if not ok:
-                    self.status.setText(f"❌ {res}（未儲存）"); return
-                account_id = res
-                values["ACCOUNT_ID"] = res
-            ok, msg = probes.probe_broker(
-                spec, env, values.get("API_KEY", ""), values.get("API_SECRET", ""), account_id)
-            if not ok:
-                self.status.setText(f"❌ {msg}（未儲存）"); return
-            extra = f"（帳號 {account_id}）" if account_id else ""
-            self.status.setText(f"✅ {msg}{extra}")
-
-        try:
-            if self.original:
-                acc_id = self.original["id"]
-                prefix = self.original.get("secret_prefix") or f"ACC{acc_id}"
-                self.repo.update(acc_id, {
-                    "label": name, "broker": broker, "environment": env,
-                    "strategy": strat, "enabled": self.enabled_chk.isChecked(),
-                    "email_recipients": [s.strip() for s in self.email_edit.text().split(";") if s.strip()],
-                })
-            else:
-                acc = build_account(name, broker, env, strat,
-                                    existing_ids=self.repo.ids(),
-                                    enabled=self.enabled_chk.isChecked(),
-                                    email_recipients=[s.strip() for s in self.email_edit.text().split(";") if s.strip()])
-                self.repo.add(acc)
-                acc_id = acc["id"]
-                prefix = acc.get("secret_prefix") or f"ACC{acc_id}"
-            # 券商感知寫入 Secrets（A-4）
             if has_input:
-                for sname, sval in broker_creds.secret_writes(broker, spec, prefix, values).items():
-                    self.gh.set_secret(sname, sval)
-        except (ValueError, GhError) as e:
-            self.status.setText(f"❌ {e}（未完成）"); return
+                self.status.setText("⏳ 測試連線中…"); self.repaint()
+                if broker_creds.needs_account_discovery(spec) and values.get("API_KEY"):
+                    ok, res = probes.fetch_account_id(spec, env, values["API_KEY"])
+                    a.step("自動取得 account_id", "ok" if ok else "fail", res)
+                    if not ok:
+                        self.status.setText(f"❌ {res}（未儲存）"); return
+                    account_id = res
+                    values["ACCOUNT_ID"] = res
+                ok, msg = probes.probe_broker(
+                    spec, env, values.get("API_KEY", ""), values.get("API_SECRET", ""), account_id)
+                a.step("券商連線測試", "ok" if ok else "fail", msg)
+                if not ok:
+                    self.status.setText(f"❌ {msg}（未儲存）"); return
+                extra = f"（帳號 {account_id}）" if account_id else ""
+                self.status.setText(f"✅ {msg}{extra}")
+
+            try:
+                if self.original:
+                    acc_id = self.original["id"]
+                    prefix = self.original.get("secret_prefix") or f"ACC{acc_id}"
+                    self.repo.update(acc_id, {
+                        "label": name, "broker": broker, "environment": env,
+                        "strategy": strat, "enabled": self.enabled_chk.isChecked(),
+                        "email_recipients": [s.strip() for s in self.email_edit.text().split(";") if s.strip()],
+                    })
+                    a.step("更新 accounts.json", "ok", f"id={acc_id}")
+                else:
+                    acc = build_account(name, broker, env, strat,
+                                        existing_ids=self.repo.ids(),
+                                        enabled=self.enabled_chk.isChecked(),
+                                        email_recipients=[s.strip() for s in self.email_edit.text().split(";") if s.strip()])
+                    self.repo.add(acc)
+                    acc_id = acc["id"]
+                    prefix = acc.get("secret_prefix") or f"ACC{acc_id}"
+                    a.step("新增 accounts.json", "ok", f"id={acc_id} prefix={prefix}")
+                # 券商感知寫入 Secrets（A-4）
+                if has_input:
+                    written = broker_creds.secret_writes(broker, spec, prefix, values)
+                    for sname, sval in written.items():
+                        self.gh.set_secret(sname, sval)
+                    a.step("寫入 GitHub Secrets", "ok", "、".join(written.keys()))
+            except (ValueError, GhError) as e:
+                a.step("儲存", "fail", f"{type(e).__name__}: {str(e)[:160]}")
+                self.status.setText(f"❌ {e}（未完成）"); return
         self.accept()
 
 

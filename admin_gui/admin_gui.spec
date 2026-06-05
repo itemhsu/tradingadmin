@@ -16,12 +16,21 @@ block_cipher = None
 
 ROOT = Path.cwd()
 
+# certifi 的 cacert.pem 必須打包進 .app，否則 urllib/SMTP 會
+# CERTIFICATE_VERIFY_FAILED（系統找不到 CA）。
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    _certifi_datas = collect_data_files("certifi")
+except Exception:
+    _certifi_datas = []
+
 a = Analysis(
     [str(ROOT / "admin_gui" / "app.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    datas=_certifi_datas,
     hiddenimports=[
+        "certifi",
         "admin_gui.views.overview_view",
         "admin_gui.views.accounts_view",
         "admin_gui.views.schedule_view",
