@@ -57,6 +57,15 @@ def main(argv=None) -> int:
     from admin_gui.services.env_fix import ensure_path
     ensure_path()
 
+    # 啟動即記一筆：App 版本 + 環境快照（除錯時一眼看出對方裝的是哪版）
+    try:
+        from admin_gui import __version__ as _ver
+        from admin_gui.services.action_log import LOG
+        with LOG.action("App 啟動") as _a:
+            _a.step("版本", "ok", f"TradingAdmin v{_ver}")
+    except Exception:   # noqa: BLE001  啟動記 log 失敗不可擋住開 App
+        pass
+
     app = QApplication(argv[:1])
 
     from admin_gui.services.global_config import GlobalConfig
