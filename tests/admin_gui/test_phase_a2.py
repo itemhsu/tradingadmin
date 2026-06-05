@@ -210,3 +210,25 @@ def test_G28b_account_log_reads(tmp_path):
     assert len(ev) == 2 and ev[0]["type"] == "FILL"   # 倒序
     nav = log_reader.account_nav_history(acc, root=tmp_path)
     assert nav[0]["date"] == "2026-06-02"
+
+
+# ── 連結相依檢查：把 dashboard 依賴檔的 HTTP 狀態寫進 log ──────────────────
+def test_diagnose_link_reports_missing_data(monkeypatch):
+    from admin_gui.services import link_diagnostics as ld
+    status = {
+        "https://x.github.io/d/mvp_dashboard.html?a=1": (200, "OK"),
+        "https://x.github.io/d/accounts.json": (200, "OK"),
+        "https://x.github.io/d/1/index.json": (404, "Not Found"),
+        "https://x.github.io/d/1/data.json": (404, "Not Found"),
+    }
+    monkeypatch.setattr(ld, "http_status", lambda url, timeout=12: status[url])
+    steps = []
+    class L:
+        def step(self, name, st, detail): steps.append((name, st, detail))
+    ld.diagnose_link("https://x.github.io/d/mvp_dashboard.html?a=1", L())
+    names = {n: s for n, s, _ in steps}
+    assert names["頁面 HTTP"] == "ok"
+    assert names["相依 accounts.json"] == "ok"
+    assert names["相依 1/index.json"] == "fail"
+    assert names["相依 1/data.json"] == "fail"
+    assert names["診斷結論"] == "warn"     # 自帶結論

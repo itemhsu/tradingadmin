@@ -178,10 +178,8 @@ class LogView(QWidget):
         ) != QMessageBox.Yes:
             return
         n = LOG.clear()
-        # 清除本身也記一筆（不靜默）→ 成為新一輪的起點
-        with LOG.action("清除 log") as a:
-            a.step("truncate action_log.jsonl", "ok", f"清除 {n} 行")
-        self.refresh()
+        # 不再把「清除」本身寫進日誌——否則清完畫面又立刻冒出一筆，使用者誤以為沒清掉。
+        self.refresh()   # 檔案已清空 → 日誌框顯示「（尚無記錄）」
         QMessageBox.information(self, "已清除", f"已清空 {n} 行動作日誌。")
 
     # ── ⬇ 下載 log（存當下最新內容成 .txt）──────────────────────────────────

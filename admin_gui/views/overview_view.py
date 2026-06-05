@@ -165,9 +165,14 @@ class OverviewView(QWidget):
         # O-2：顯示 GitHub 登入名（不顯示 repo slug）
         self.user_lbl = QLabel("…"); fe.addRow("GitHub 登入", self.user_lbl)
         # O-3：Dashboard 回測分析網頁連結
-        self.mvp_lbl = QLabel("…"); self.mvp_lbl.setOpenExternalLinks(True)
+        # 連結改用 linkActivated：點擊時先做相依檢查（寫進 log）再開瀏覽器
+        self.mvp_lbl = QLabel("…"); self.mvp_lbl.setOpenExternalLinks(False)
+        self.mvp_lbl.linkActivated.connect(
+            lambda u: self._open_checked_link(u, "持倉 Dashboard"))
         fe.addRow("持倉 Dashboard", self.mvp_lbl)
-        self.dash_lbl = QLabel("…"); self.dash_lbl.setOpenExternalLinks(True)
+        self.dash_lbl = QLabel("…"); self.dash_lbl.setOpenExternalLinks(False)
+        self.dash_lbl.linkActivated.connect(
+            lambda u: self._open_checked_link(u, "回測分析"))
         fe.addRow("回測分析", self.dash_lbl)
         mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
         fe.addRow("存取方式", mode)
@@ -215,6 +220,21 @@ class OverviewView(QWidget):
                 f"{slug} 的測試執行（dry-run）已送出。\n到該 repo 的 Actions 看結果。")
         else:
             QMessageBox.warning(self, "觸發失敗", "gh 觸發 workflow 失敗，請確認登入與權限。")
+
+    def _open_checked_link(self, url: str, label: str):
+        """點外部連結：先逐一檢查相依檔（寫進 log），再開瀏覽器。
+        讓 dashboard 的 404/權限問題直接進 log，使用者不必回傳畫面。"""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        from admin_gui.services.action_log import LOG
+        from admin_gui.services import link_diagnostics as ld
+        with LOG.action(f"開啟連結：{label}", ctx=self.repo_slug) as a:
+            a.step("url", "ok", url)
+            try:
+                ld.diagnose_link(url, a)
+            except Exception as e:   # noqa: BLE001  檢查失敗不擋開連結
+                a.step("相依檢查", "fail", f"{type(e).__name__}: {str(e)[:120]}")
+        QDesktopServices.openUrl(QUrl(url))
 
     def _open_wizard(self):
         """重新開首次設定精靈：可改 repo 或重新 gh 登入。"""
