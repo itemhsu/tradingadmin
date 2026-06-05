@@ -35,11 +35,21 @@ def is_first_run(config: GlobalConfig) -> bool:
 
 
 def _gh(args, inp=None, timeout=60):
+    """所有 gh 流量的瓶頸 —— 在這裡內建 log，涵蓋全部 ~50 個呼叫點（密度規則 C）。
+    回傳即記 args(去敏) + rc；非零記 stderr 前 200 字。"""
+    from admin_gui.services.action_log import LOG, mask_secrets
+    safe_args = mask_secrets(" ".join(str(a) for a in args))[:200]
     try:
         r = subprocess.run(["gh", *args], capture_output=True, text=True,
                            input=inp, timeout=timeout)
-        return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
-    except Exception as e:  # noqa: BLE001
+        code = r.returncode
+        out = (r.stdout or "").strip()
+        err = (r.stderr or "").strip()
+        if code != 0:
+            LOG.note("gh", "warn", f"rc={code} `{safe_args}` err={err[:200]}")
+        return code, out, err
+    except Exception as e:  # noqa: BLE001  例外＝記原因，不靜默
+        LOG.note("gh", "fail", f"`{safe_args}` exc={type(e).__name__}: {str(e)[:160]}")
         return 1, "", str(e)
 
 
@@ -251,59 +261,80 @@ class SetupWizard(QDialog):
         ) != QMessageBox.Yes:
             return
 
-        versions = er.list_versions(_ENGINE_REPO)
-        if not versions:
-            QMessageBox.warning(self, "找不到引擎版本",
-                                "無法列出公開引擎 Release，請確認 gh 已登入。"); return
-        latest = versions[0]
+        from admin_gui.services.action_log import LOG
+        with LOG.action(f"{verb}交易系統", ctx=slug) as a:
+            versions = er.list_versions(_ENGINE_REPO)
+            if not versions:
+                a.step("list_versions", "fail", f"列不到 {_ENGINE_REPO} 的 Release")
+                QMessageBox.warning(self, "找不到引擎版本",
+                                    "無法列出公開引擎 Release，請確認 gh 已登入。"); return
+            latest = versions[0]
+            a.step("latest engine", "ok", latest)
 
-        # ── ① Repo B：建 repo（已存在略過）+ 初始 accounts.json（缺才補）+ sync ──
-        _gh(["repo", "create", slug, "--private"])         # exists → 無害失敗
-        if _gh(["api", f"repos/{slug}/contents/accounts.json", "--jq", ".sha"])[0] != 0:
-            init_files = pv.build_template_files(latest)    # 取初始 accounts.json
-            acc = init_files.get("accounts.json")
-            if acc:
-                _gh(["api", "-X", "PUT", f"repos/{slug}/contents/accounts.json", "--input", "-"],
-                    inp=_json.dumps({"message": "init accounts.json",
-                                     "content": _b64.b64encode(acc).decode()}))
-        # 安全：若已有別名 daily workflow（如舊用戶 daily_all_accounts.yml），
-        # 不另render daily.yml，避免兩個每日 workflow 重複下單（用「更新引擎」改原檔）
-        skip = set()
-        cwf, wf_raw, _ = _gh(["api", f"repos/{slug}/contents/.github/workflows",
-                              "--jq", "[.[].name]"])
-        if cwf == 0 and wf_raw:
-            try:
-                names = _json.loads(wf_raw)
-            except Exception:  # noqa: BLE001
-                names = []
-            legacy = [n for n in names
-                      if n.endswith(".yml") and n != "daily.yml"
-                      and ("daily" in n or "all_accounts" in n)]
-            if legacy:
-                skip.add(".github/workflows/daily.yml")
-        rs.sync("repo_b", slug, latest, gh=_gh, skip_paths=skip)
-        self.config.set("repob_slug", slug)
+            # ── ① Repo B：建 repo + 初始 accounts.json（缺才補）+ sync ──
+            rc = _gh(["repo", "create", slug, "--private"])
+            a.step("gh repo create (repo B)", "ok" if rc[0] == 0 else "warn",
+                   f"rc={rc[0]} {rc[2][:80]}（已存在屬正常）")
+            if _gh(["api", f"repos/{slug}/contents/accounts.json", "--jq", ".sha"])[0] != 0:
+                init_files = pv.build_template_files(latest)
+                acc = init_files.get("accounts.json")
+                if acc:
+                    pr = _gh(["api", "-X", "PUT", f"repos/{slug}/contents/accounts.json", "--input", "-"],
+                             inp=_json.dumps({"message": "init accounts.json",
+                                              "content": _b64.b64encode(acc).decode()}))
+                    a.step("init accounts.json", "ok" if pr[0] == 0 else "fail", f"rc={pr[0]}")
+            # 安全：別名 daily workflow → 不另 render daily.yml（避免重複下單）
+            skip = set()
+            cwf, wf_raw, _ = _gh(["api", f"repos/{slug}/contents/.github/workflows",
+                                  "--jq", "[.[].name]"])
+            if cwf == 0 and wf_raw:
+                try:
+                    names = _json.loads(wf_raw)
+                except Exception as ex:  # noqa: BLE001
+                    a.step("parse workflows", "warn", f"{type(ex).__name__}: {wf_raw[:120]}")
+                    names = []
+                legacy = [n for n in names if n.endswith(".yml") and n != "daily.yml"
+                          and ("daily" in n or "all_accounts" in n)]
+                if legacy:
+                    skip.add(".github/workflows/daily.yml")
+                    a.step("legacy daily workflow", "warn",
+                           f"偵測到 {legacy}，跳過 daily.yml（避免重複下單）")
+            rs.sync("repo_b", slug, latest, gh=_gh, skip_paths=skip, logger=a)
+            self.config.set("repob_slug", slug)
 
-        # ── ② Dashboard：建 repo + 共用 viewer 複製（ensure）+ sync placeholders ──
-        _gh(["repo", "create", dash, "--public"])
-        TEMPLATE = "itemhsu/tech-rebalance-dashboard"
-        for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
-            if _gh(["api", f"repos/{dash}/contents/{fpath}", "--jq", ".sha"])[0] != 0:
-                cr, c64, _ = _gh(["api", f"repos/{TEMPLATE}/contents/{fpath}", "--jq", ".content"])
-                if cr == 0 and c64.strip():
-                    _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{fpath}", "--input", "-"],
-                        inp=_json.dumps({"message": f"seed {fpath}",
-                                         "content": c64.replace("\n", "")}))
-        rs.sync("dashboard", dash, latest, gh=_gh)          # .nojekyll + index.html + accounts.json
-        pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
-        cp, _, ep = _gh(["api", "-X", "POST", f"repos/{dash}/pages", "--input", "-"],
-                        inp=pages_payload)
-        dash_ok = cp == 0 or "already" in ep.lower() or "409" in ep
+            # ── ② Dashboard：建 repo + 共用 viewer 複製 + sync placeholders ──
+            rc = _gh(["repo", "create", dash, "--public"])
+            a.step("gh repo create (dashboard)", "ok" if rc[0] == 0 else "warn",
+                   f"rc={rc[0]} {rc[2][:80]}（已存在屬正常）")
+            TEMPLATE = "itemhsu/tech-rebalance-dashboard"
+            for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
+                if _gh(["api", f"repos/{dash}/contents/{fpath}", "--jq", ".sha"])[0] != 0:
+                    cr, c64, ce = _gh(["api", f"repos/{TEMPLATE}/contents/{fpath}", "--jq", ".content"])
+                    if cr == 0 and c64.strip():
+                        _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{fpath}", "--input", "-"],
+                            inp=_json.dumps({"message": f"seed {fpath}",
+                                             "content": c64.replace("\n", "")}))
+                        a.step(f"seed {fpath}", "ok", "from template")
+                    else:
+                        a.step(f"seed {fpath}", "fail", f"rc={cr} err={ce[:120]}")
+            rs.sync("dashboard", dash, latest, gh=_gh, logger=a)
+            pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
+            cp, _, ep = _gh(["api", "-X", "POST", f"repos/{dash}/pages", "--input", "-"],
+                            inp=pages_payload)
+            dash_ok = cp == 0 or "already" in ep.lower() or "409" in ep
+            a.step("enable Pages", "ok" if dash_ok else "warn", f"rc={cp} {ep[:80]}")
 
-        QMessageBox.information(self, f"{verb}完成",
-            f"Repo B：✅\nDashboard：{'✅ 已啟用' if dash_ok else '⚠ Pages 需手動啟用'}\n\n"
-            f"下一步：\n1. 到 {slug} Settings → Secrets 設 Alpaca 金鑰\n"
-            f"2. Dashboard：https://{u}.github.io/tech-rebalance-dashboard/")
+            problems = a.problems()
+
+        # 結果對話框依實際步驟 —— 不假成功
+        if not problems:
+            QMessageBox.information(self, f"{verb}完成",
+                f"全部成功 ✅\n\n下一步：\n1. 到 {slug} Settings → Secrets 設 Alpaca 金鑰\n"
+                f"2. Dashboard：https://{u}.github.io/tech-rebalance-dashboard/")
+        else:
+            detail = "\n".join(f"• {p.name}: {p.status} {p.detail}" for p in problems if p.status != "skip")
+            QMessageBox.warning(self, f"{verb}完成但有問題",
+                f"以下步驟未完全成功（詳見「日誌」分頁，可按📧發送 log）：\n\n{detail}")
         self._refresh_status()
 
     # ── 更新引擎版本 ─────────────────────────────────────────────────────

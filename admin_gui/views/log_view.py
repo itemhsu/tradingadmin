@@ -44,10 +44,25 @@ class LogView(QWidget):
         all_link.setToolTip(f"https://github.com/{repo_slug}/actions")
         bar.addWidget(all_link)
 
+        clr_btn = QPushButton("🗑 清除 log")
+        clr_btn.setToolTip("清空本機動作日誌（重現問題前先清，寄來的 log 才乾淨）")
+        clr_btn.clicked.connect(self._clear_log)
+        bar.addWidget(clr_btn)
+
+        send_btn = QPushButton("📧 發送 log")
+        send_btn.setToolTip("把本機動作日誌寄給開發者（itemhsu@gmail.com）以便診斷")
+        send_btn.clicked.connect(self._send_log)
+        bar.addWidget(send_btn)
+
         rb = QPushButton("↻ 重新整理")
         rb.clicked.connect(self.refresh)
         bar.addWidget(rb)
         v.addLayout(bar)
+
+        # 重現步驟說明
+        hint = QLabel("回報問題標準流程：① 🗑 清除 log → ② 重做出問題的操作 → ③ 📧 發送 log")
+        hint.setStyleSheet("color:#94a3b8;font-size:11px;")
+        v.addWidget(hint)
 
         # ── 排程執行表格 ─────────────────────────────────────────────────
         v.addWidget(QLabel("排程執行（最近 20 次）"))
@@ -128,6 +143,60 @@ class LogView(QWidget):
                 f"{e['ts'][5:16]}  {e['action']}  {e['target']}  {e['result']}")
         self.audit_box.setPlainText(
             "\n".join(lines) if lines else "（尚無操作記錄）")
+
+    # ── 🗑 清除 log ───────────────────────────────────────────────────────
+    def _clear_log(self):
+        from PySide6.QtWidgets import QMessageBox
+        from admin_gui.services.action_log import LOG
+        if QMessageBox.question(
+                self, "清除 log",
+                "清空本機動作日誌（不可逆，只清本機、不碰 GitHub 排程歷史）。\n"
+                "建議重現問題前清一次，這樣寄來的 log 才乾淨。要繼續嗎？"
+        ) != QMessageBox.Yes:
+            return
+        n = LOG.clear()
+        # 清除本身也記一筆（不靜默）→ 成為新一輪的起點
+        with LOG.action("清除 log") as a:
+            a.step("truncate action_log.jsonl", "ok", f"清除 {n} 行")
+        self.refresh()
+        QMessageBox.information(self, "已清除", f"已清空 {n} 行動作日誌。")
+
+    # ── 📧 發送 log ───────────────────────────────────────────────────────
+    def _send_log(self):
+        from pathlib import Path
+        from PySide6.QtWidgets import QMessageBox
+        from admin_gui.services.action_log import LOG, env_snapshot
+        from admin_gui.services import probes
+        from admin_gui.services.global_config import GlobalConfig
+
+        with LOG.action("發送 log email", ctx=self.repo_slug) as a:
+            body = (f"# TradingAdmin 動作日誌\n{env_snapshot(self.repo_slug)}\n"
+                    + "=" * 50 + "\n" + LOG.tail_text(500))   # tail_text 已遮罩金鑰
+            a.step("組裝 log", "ok", f"{len(body)} bytes")
+            cfg = GlobalConfig()
+            sender = cfg.get("email_sender") or ""
+            # EMAIL_PASSWORD 在 GitHub secret，本機沒有 → 後援：存桌面檔
+            pw = cfg.get("email_password_local") or ""
+            if sender and pw:
+                ok, msg = probes.send_log_to_dev(
+                    sender, pw, body,
+                    subject=f"[TradingAdmin log] {probes.gh_login() or '?'}")
+                a.step("SMTP 寄送", "ok" if ok else "fail", msg)
+                dlg = (QMessageBox.information if ok else QMessageBox.warning)
+                dlg(self, "發送 log", msg)
+                return
+            # 後援：存桌面檔，請使用者手動寄
+            dest = Path.home() / "Desktop" / "tradingadmin-log.txt"
+            try:
+                dest.write_text(body, encoding="utf-8")
+                a.step("存桌面檔（無 SMTP 密碼）", "warn", str(dest))
+                QMessageBox.information(
+                    self, "已存檔（需手動寄）",
+                    f"目前沒有可寄信的密碼，log 已存到：\n{dest}\n\n"
+                    f"請手動把這個檔寄給 itemhsu@gmail.com。")
+            except Exception as e:  # noqa: BLE001
+                a.step("存桌面檔", "fail", f"{type(e).__name__}: {str(e)[:120]}")
+                QMessageBox.warning(self, "失敗", f"連存檔都失敗：{e}")
 
     # ── 下載 log ─────────────────────────────────────────────────────────
     def _download_log(self, run_id: int):

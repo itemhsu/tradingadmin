@@ -38,14 +38,19 @@ _FALLBACK_MANIFEST: dict = {
 _VALID_POLICIES = {"render", "placeholder", "protected"}
 
 
-def _gh_get_content(gh: Callable, path: str) -> Optional[str]:
-    """經 gh api 取 pub engine 某檔內容（base64 解碼）；失敗回 None。"""
-    c, b64, _ = gh(["api", f"repos/{_PUB_REPO}/contents/{path}", "--jq", ".content"])
+def _gh_get_content(gh: Callable, path: str, logger=None) -> Optional[str]:
+    """經 gh api 取 pub engine 某檔內容（base64 解碼）；失敗回 None（並記原因，不靜默）。"""
+    c, b64, err = gh(["api", f"repos/{_PUB_REPO}/contents/{path}", "--jq", ".content"])
     if c != 0 or not (b64 or "").strip():
+        if logger:
+            logger.step(f"fetch {path}", "fail",
+                        f"rc={c} repo={_PUB_REPO} err={(err or '')[:200]}")
         return None
     try:
         return base64.b64decode(b64.replace("\n", "")).decode("utf-8")
-    except Exception:   # noqa: BLE001
+    except Exception as e:   # noqa: BLE001
+        if logger:
+            logger.step(f"decode {path}", "fail", f"{type(e).__name__}: {str(e)[:120]}")
         return None
 
 
@@ -94,18 +99,22 @@ def _seed(path: str) -> bytes:
 def sync(section: str, slug: str, version: str, *,
          gh: Callable, http_get: Optional[Callable[[str], Optional[str]]] = None,
          manifest: Optional[dict] = None,
-         skip_paths: Optional[set] = None) -> Dict[str, str]:
+         skip_paths: Optional[set] = None,
+         logger=None) -> Dict[str, str]:
     """對 slug 套用 manifest[section] 的所有 policy。回 {path: action}。
 
     gh(args, inp=None) → (code, out, err)，與 wizard._gh 同介面。
     http_get(path) 取 pub engine 檔內容；預設經 gh api（App 內穩定）。
+    logger（_ActionScope）：每個 path 的結果逐筆 step；render 抓檔失敗也記。
     render 覆蓋、placeholder 缺才建、protected 跳過。
     skip_paths 內的 path 完全跳過（如：舊用戶已有別名 daily workflow，避免重複）。
     """
-    get = http_get or (lambda path: _gh_get_content(gh, path))
+    get = http_get or (lambda path: _gh_get_content(gh, path, logger))
     m = manifest or fetch_manifest(get)
     skip_paths = skip_paths or set()
     actions: Dict[str, str] = {}
+    _S = {"rendered": "ok", "created": "ok", "kept": "ok", "protected": "ok",
+          "skipped": "skip", "skip-no-template": "fail", "skip-unknown-policy": "warn"}
 
     def _exists(path: str) -> bool:
         return gh(["api", f"repos/{slug}/contents/{path}", "--jq", ".sha"])[0] == 0
@@ -126,10 +135,11 @@ def sync(section: str, slug: str, version: str, *,
         if policy == "render":
             tmpl = get(e["src"])
             if tmpl is None:
-                actions[path] = "skip-no-template"
-                continue
-            _put(path, tmpl.replace("{version}", version).encode(), f"sync(render): {path} @ {version}")
-            actions[path] = "rendered"
+                actions[path] = "skip-no-template"   # 抓檔失敗（上一步已記原因）
+            else:
+                _put(path, tmpl.replace("{version}", version).encode(),
+                     f"sync(render): {path} @ {version}")
+                actions[path] = "rendered"
         elif policy == "placeholder":
             if _exists(path):
                 actions[path] = "kept"
@@ -140,4 +150,8 @@ def sync(section: str, slug: str, version: str, *,
             actions[path] = "protected"
         else:
             actions[path] = "skip-unknown-policy"   # 未知 policy → 安全跳過
+        if logger:
+            act = actions[path]
+            detail = act if act != "skip-no-template" else f"{act}（範本抓取失敗，見上一步）"
+            logger.step(f"{section}/{path}", _S.get(act, "warn"), detail)
     return actions

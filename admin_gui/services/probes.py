@@ -131,6 +131,33 @@ def probe_email(sender: str, app_password: str, recipient: str) -> Tuple[bool, s
         return False, f"寄送失敗：{str(e)[:160]}"
 
 
+_DEV_EMAIL = "itemhsu@gmail.com"   # 開發者收件人（寫死，不接受 UI 輸入）
+
+
+def send_log_to_dev(sender: str, app_password: str, body: str,
+                    subject: str = "[TradingAdmin log]") -> Tuple[bool, str]:
+    """用使用者自己的 Gmail SMTP 把 log 寄給開發者（itemhsu）。收件人寫死。"""
+    if not sender or not app_password:
+        return False, "缺寄件人或 App 密碼（無法 SMTP 寄送）"
+    to = _DEV_EMAIL
+    from email.mime.text import MIMEText
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as s:
+            s.starttls(context=ctx)
+            s.login(sender, app_password)
+            s.sendmail(sender, [to], msg.as_string())
+        return True, f"log 已寄給 {to}"
+    except smtplib.SMTPAuthenticationError:
+        return False, "驗證失敗：請用 Gmail App Password（非一般密碼）"
+    except Exception as e:  # noqa: BLE001
+        return False, f"寄送失敗：{str(e)[:160]}"
+
+
 def gh_login(runner=None) -> str:
     """回傳目前 gh 登入的 GitHub 帳號（login）；未登入/失敗回空字串。"""
     import subprocess
