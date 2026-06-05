@@ -154,3 +154,27 @@ def test_wizard_builds(qapp, monkeypatch, tmp_path):
         texts.append(lbl.text())
     blob = " ".join(texts)
     assert "EMAIL" not in blob.upper() and "密碼" not in blob and "帳戶" not in blob
+
+
+def test_publish_accounts_to_dashboard_public_only(qapp, monkeypatch):
+    """bug4：帳戶異動同步到 dashboard repo 的 accounts.json，只含公開欄位。"""
+    import json
+    import admin_gui.services.repo_store as rs
+    cap = {}
+    class FakeStore:
+        def write_text(self, path, text, message=""):
+            cap.update(path=path, text=text)
+    monkeypatch.setattr(rs, "make_store",
+                        lambda repo_slug=None, **k: cap.update(slug=repo_slug) or FakeStore())
+    from admin_gui.views.accounts_view import publish_accounts_to_dashboard
+    accts = [{"id": "1", "label": "trade", "strategy": "mom_6m_t20",
+              "enabled": True, "secret_prefix": "ACC1", "broker": "alpaca"}]
+    publish_accounts_to_dashboard("o/tech-rebalance", accts)
+    assert cap["slug"] == "o/tech-rebalance-dashboard"
+    assert cap["path"] == "accounts.json"
+    d = json.loads(cap["text"])
+    assert d["accounts"][0] == {"id": "1", "label": "trade",
+                                "strategy": "mom_6m_t20", "enabled": True}
+    # 不得外洩內部/敏感欄位
+    assert "secret_prefix" not in d["accounts"][0]
+    assert "broker" not in d["accounts"][0]

@@ -29,6 +29,29 @@ _HEADERS = ["帳戶名稱", "啟用", "券商", "環境", "策略", "最後 NAV"
 _ENV_COL = 3   # 「環境」欄索引（用於 live 標紅）
 
 
+def publish_accounts_to_dashboard(repo_b_slug: str, accounts: list, logger=None) -> None:
+    """把公開可見的帳戶清單寫到 dashboard repo 的 accounts.json。
+
+    為什麼需要：GUI 把 accounts.json 存到「私有 repo B」，但 dashboard 讀的是
+    「公開 dashboard repo」的 accounts.json —— 兩者不同檔，不同步 dashboard 就會
+    顯示「accounts.json 中沒有帳戶」。此函式在每次帳戶異動後把清單推到 dashboard。
+    只放公開安全欄位（id/label/strategy/enabled）；密鑰另存 GitHub Secrets，永不入此檔。
+    """
+    import json
+    from admin_gui.services.repo_store import make_store
+    dash_slug = f"{repo_b_slug}-dashboard"
+    pub = {"accounts": [
+        {"id": a.get("id"), "label": a.get("label", ""),
+         "strategy": a.get("strategy", ""), "enabled": bool(a.get("enabled", True))}
+        for a in accounts]}
+    store = make_store(repo_slug=dash_slug)
+    store.write_text("accounts.json", json.dumps(pub, ensure_ascii=False),
+                     "chore: sync accounts.json from admin GUI")
+    if logger is not None:
+        logger.step("同步 accounts.json → dashboard", "ok",
+                    f"{dash_slug}（{len(pub['accounts'])} 個帳戶）")
+
+
 class AccountDialog(QDialog):
     """新增/編輯帳戶（金鑰欄位依券商動態 + 測試才存）。"""
 
@@ -194,6 +217,11 @@ class AccountDialog(QDialog):
             except (ValueError, GhError) as e:
                 a.step("儲存", "fail", f"{type(e).__name__}: {str(e)[:160]}")
                 self.status.setText(f"❌ {e}（未完成）"); return
+            # 同步 accounts.json 到 dashboard repo（否則 dashboard 顯示「沒有帳戶」）
+            try:
+                publish_accounts_to_dashboard(self.gh.repo, self.repo.load(), a)
+            except Exception as e:  # noqa: BLE001  同步失敗不擋帳戶儲存（已存進 repo B）
+                a.step("同步 accounts.json → dashboard", "fail", str(e)[:160])
         self.accept()
 
 
@@ -297,4 +325,8 @@ class AccountsView(QWidget):
             a.step("目標", "ok", f"id={acc_id} label={acc.get('label')}")
             self.repo.delete(acc_id)
             a.step("從 accounts.json 移除", "ok", f"id={acc_id}（保留 {acc.get('data_dir')}/）")
+            try:
+                publish_accounts_to_dashboard(self.gh.repo, self.repo.load(), a)
+            except Exception as e:  # noqa: BLE001
+                a.step("同步 accounts.json → dashboard", "fail", str(e)[:160])
         self.refresh()
