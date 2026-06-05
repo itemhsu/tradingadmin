@@ -38,6 +38,7 @@ class DiffDialog(QDialog):
 class ScheduleView(QWidget):
     def __init__(self, repo_slug: str = "itemhsu/tech-rebalance", store=None, parent=None):
         super().__init__(parent)
+        self.repo_slug = repo_slug
         if store is None:
             from admin_gui.services.repo_store import make_store
             store = make_store(repo_slug=repo_slug)
@@ -52,11 +53,59 @@ class ScheduleView(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.table)
 
+        # 空狀態：沒有任何排程時顯示說明 + 一鍵啟用
+        self.empty_hint = QLabel(
+            "目前沒有啟用任何排程。\n\n"
+            "每日自動交易（daily.yml）出廠時是「關閉」的——先用手動觸發確認沒問題，\n"
+            "確認 OK 後再按下方按鈕啟用每日自動執行（預設美股收盤後 UTC 21:15，"
+            "台灣隔日清晨 05:15，週一至週五）。")
+        self.empty_hint.setStyleSheet("color:#64748b;padding:16px;")
+        self.empty_hint.setWordWrap(True)
+        layout.addWidget(self.empty_hint)
+
         bar = QHBoxLayout()
         b = QPushButton("↻ 重新整理"); b.clicked.connect(self.refresh); bar.addWidget(b)
+        self.enable_btn = QPushButton("✅ 啟用每日自動執行")
+        self.enable_btn.setToolTip("把 daily.yml 的 schedule 取消註解（預設 UTC 21:15 週一至週五）並寫回 GitHub")
+        self.enable_btn.clicked.connect(self._enable_daily)
+        bar.addWidget(self.enable_btn)
         bar.addStretch()
         layout.addLayout(bar)
         self._rows: List[tuple] = []
+        self.refresh()
+
+    def _enable_daily(self):
+        from admin_gui.services.action_log import LOG
+        # 找 daily.yml（或第一個含 run-account 的 workflow）
+        target = ".github/workflows/daily.yml"
+        text = self.store.read_text_or_none(target)
+        if text is None:
+            for wf in self._list_workflows():
+                if "daily" in Path(wf).name:
+                    target, text = wf, self.store.read_text_or_none(wf)
+                    break
+        if not text:
+            QMessageBox.warning(self, "找不到 daily.yml",
+                "找不到每日交易 workflow。請先到「總覽」按『重新執行設定精靈』修復交易系統。")
+            return
+        if ce.read_crons_text(text):
+            QMessageBox.information(self, "已是啟用狀態", "每日排程已經啟用，無需重複。")
+            self.refresh(); return
+        new_text = ce.enable_schedule(text)
+        preview = (f"將啟用每日自動執行：\n\n{Path(target).name}\n"
+                   f"新增排程：15 21 * * 1-5（UTC 21:15，台灣隔日 05:15，週一至週五）\n\n"
+                   f"按「確認 commit」會直接寫回 GitHub。之後可在表格用「改時間」調整。")
+        if DiffDialog("啟用每日自動執行", preview, self).exec() != QDialog.Accepted:
+            return
+        with LOG.action("啟用每日自動執行", ctx=getattr(self, "repo_slug", "")) as a:
+            try:
+                msg = self.store.write_text(target, new_text,
+                                            "chore(schedule): 啟用每日自動執行 cron")
+                a.step("寫回 daily.yml", "ok", msg)
+                QMessageBox.information(self, "完成", "已啟用每日自動執行。")
+            except Exception as e:  # noqa: BLE001
+                a.step("寫回 daily.yml", "fail", f"{type(e).__name__}: {str(e)[:160]}")
+                QMessageBox.warning(self, "失敗", f"寫入失敗：{e}")
         self.refresh()
 
     def _list_workflows(self) -> list:
@@ -80,6 +129,11 @@ class ScheduleView(QWidget):
             self._wf_text[wf] = text
             for c in ce.read_crons_text(text):
                 self._rows.append((wf, c))
+        # 空狀態切換：有排程→顯示表格藏說明；無排程→藏表格顯示說明+啟用鈕
+        empty = not self._rows
+        self.empty_hint.setVisible(empty)
+        self.table.setVisible(not empty)
+        self.enable_btn.setVisible(empty)
         self.table.setRowCount(len(self._rows))
         for r, (wf, c) in enumerate(self._rows):
             self.table.setItem(r, 0, QTableWidgetItem(Path(wf).name))

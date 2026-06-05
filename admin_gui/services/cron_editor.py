@@ -78,6 +78,50 @@ def read_crons(yaml_path: Path) -> List[CronEntry]:
     return read_crons_text(Path(yaml_path).read_text(encoding="utf-8"))
 
 
+def enable_schedule(yaml_text: str, expr: str = "15 21 * * 1-5") -> str:
+    """讓 workflow 的 schedule 生效，回傳新文字。
+
+    三種情形：
+      1. 已有生效的 cron → 原樣返回（不重複）
+      2. 有被註解的 schedule 區塊（`# schedule:` / `#   - cron: '...'`）→ 取消註解
+      3. 都沒有 → 在 `on:` 下方插入 schedule 區塊
+    """
+    CronEntry.parse(expr)
+    if read_crons_text(yaml_text):          # 已生效
+        return yaml_text
+    lines = yaml_text.splitlines(keepends=True)
+    out = []
+    done = False
+    skip_commented_cron = False
+    for line in lines:
+        body = line.rstrip("\n")
+        nl = "\n" if line.endswith("\n") else ""
+        m_sched = re.match(r"^(\s*)#\s*schedule:\s*$", body)
+        if m_sched and not done:
+            ind = m_sched.group(1)               # schedule: 的縮排
+            out.append(f"{ind}schedule:{nl}")
+            out.append(f"{ind}  - cron: '{expr}'{nl}")   # cron 再多縮 2 格
+            skip_commented_cron = True
+            done = True
+            continue
+        if skip_commented_cron and re.match(r"^\s*#\s*-\s*cron:", body):
+            continue                              # 丟掉舊的被註解 cron 行
+        skip_commented_cron = False
+        out.append(line)
+    if done:
+        return "".join(out)
+    # 情形 3：沒有被註解的 schedule → 在 on: 行後插入
+    out, inserted = [], False
+    for line in lines:
+        out.append(line)
+        if not inserted and re.match(r"^on:\s*$", line.rstrip("\n")):
+            out.append(f"  schedule:\n    - cron: '{expr}'\n")
+            inserted = True
+    if not inserted:
+        raise ValueError("找不到 on: 區塊，無法插入 schedule")
+    return "".join(out)
+
+
 def replace_cron(yaml_text: str, old_expr: str, new_expr: str) -> str:
     """就地替換一行 cron 表達式（保留縮排與引號風格），回傳新文字。
 

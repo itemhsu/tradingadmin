@@ -46,10 +46,13 @@ def _gh(args, inp=None, timeout=60):
         out = (r.stdout or "").strip()
         err = (r.stderr or "").strip()
         if code != 0:
-            # 冪等修復的「預期」非零（repo 已存在 / Pages 已啟用 / 404 探測）不算警告
+            # 冪等修復的「預期」非零（repo 已存在 / Pages 已啟用 / 404 探測）不算警告。
+            # 404：render 前查檔案 sha，檔案還沒建立會回 404，屬正常「將建立」路徑。
             benign = ("already exists" in err.lower()
                       or "already enabled" in err.lower()
-                      or "http 409" in err.lower())
+                      or "http 409" in err.lower()
+                      or "http 404" in err.lower()
+                      or "not found" in err.lower())
             LOG.note("gh", "ok" if benign else "warn",
                      f"rc={code} `{safe_args}` err={err[:200]}")
         return code, out, err

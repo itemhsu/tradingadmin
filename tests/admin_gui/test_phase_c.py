@@ -64,3 +64,24 @@ def test_read_crons_text():
     )
     crons = ce.read_crons_text(yaml)
     assert [c.to_expr() for c in crons] == ["30 21 * * 1-5", "0 22 * * 1-5"]
+
+
+def test_enable_schedule_uncomments_block():
+    from admin_gui.services import cron_editor as ce
+    yaml = ("name: x\non:\n  # 對帳前手動觸發\n  # schedule:\n"
+            "  #   - cron: '15 21 * * 1-5'\n  workflow_dispatch:\n")
+    assert ce.read_crons_text(yaml) == []          # 註解狀態無生效 cron
+    new = ce.enable_schedule(yaml)
+    crons = ce.read_crons_text(new)
+    assert len(crons) == 1 and crons[0].to_expr() == "15 21 * * 1-5"
+    assert "  schedule:\n" in new and "    - cron: '15 21 * * 1-5'\n" in new
+    # 冪等：已生效則原樣返回
+    assert ce.enable_schedule(new) == new
+
+
+def test_enable_schedule_inserts_when_no_block():
+    from admin_gui.services import cron_editor as ce
+    yaml = "name: x\non:\n  workflow_dispatch:\n"
+    new = ce.enable_schedule(yaml, "0 13 * * 1")
+    crons = ce.read_crons_text(new)
+    assert len(crons) == 1 and crons[0].to_expr() == "0 13 * * 1"
