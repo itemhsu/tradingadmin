@@ -88,13 +88,16 @@ def _seed(path: str) -> bytes:
 
 def sync(section: str, slug: str, version: str, *,
          gh: Callable, http_get: Callable[[str], Optional[str]] = _http_get,
-         manifest: Optional[dict] = None) -> Dict[str, str]:
+         manifest: Optional[dict] = None,
+         skip_paths: Optional[set] = None) -> Dict[str, str]:
     """對 slug 套用 manifest[section] 的所有 policy。回 {path: action}。
 
     gh(args, inp=None) → (code, out, err)，與 wizard._gh 同介面。
     render 覆蓋、placeholder 缺才建、protected 跳過。
+    skip_paths 內的 path 完全跳過（如：舊用戶已有別名 daily workflow，避免重複）。
     """
     m = manifest or fetch_manifest(http_get)
+    skip_paths = skip_paths or set()
     actions: Dict[str, str] = {}
 
     def _exists(path: str) -> bool:
@@ -110,6 +113,9 @@ def sync(section: str, slug: str, version: str, *,
 
     for e in m.get(section, []):
         path, policy = e["path"], e["policy"]
+        if path in skip_paths:
+            actions[path] = "skipped"
+            continue
         if policy == "render":
             tmpl = http_get(_PUB_RAW + e["src"])
             if tmpl is None:

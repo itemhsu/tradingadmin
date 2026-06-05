@@ -266,7 +266,22 @@ class SetupWizard(QDialog):
                 _gh(["api", "-X", "PUT", f"repos/{slug}/contents/accounts.json", "--input", "-"],
                     inp=_json.dumps({"message": "init accounts.json",
                                      "content": _b64.b64encode(acc).decode()}))
-        rs.sync("repo_b", slug, latest, gh=_gh)             # daily.yml + test_email.yml + data/.gitkeep
+        # 安全：若已有別名 daily workflow（如舊用戶 daily_all_accounts.yml），
+        # 不另render daily.yml，避免兩個每日 workflow 重複下單（用「更新引擎」改原檔）
+        skip = set()
+        cwf, wf_raw, _ = _gh(["api", f"repos/{slug}/contents/.github/workflows",
+                              "--jq", "[.[].name]"])
+        if cwf == 0 and wf_raw:
+            try:
+                names = _json.loads(wf_raw)
+            except Exception:  # noqa: BLE001
+                names = []
+            legacy = [n for n in names
+                      if n.endswith(".yml") and n != "daily.yml"
+                      and ("daily" in n or "all_accounts" in n)]
+            if legacy:
+                skip.add(".github/workflows/daily.yml")
+        rs.sync("repo_b", slug, latest, gh=_gh, skip_paths=skip)
         self.config.set("repob_slug", slug)
 
         # ── ② Dashboard：建 repo + 共用 viewer 複製（ensure）+ sync placeholders ──
