@@ -45,7 +45,10 @@ def test_G05_set_secret_value_via_stdin_not_argv():
     # 值必須在 stdin（input=），絕不在 cmd list
     assert call["kw"].get("input") == "SUPER_SECRET_VALUE"
     assert "SUPER_SECRET_VALUE" not in call["cmd"]
-    assert "--body" in call["cmd"] and "-" in call["cmd"]   # body 從 stdin
+    # ⚠ 回歸防護：絕不可帶 --body。gh 把 `--body -` 當字面值 "-"，會吃掉 stdin
+    # 的真值，導致所有 secret 都被存成 "-"（2026-06 釀成多日 email 失敗的根因）。
+    assert "--body" not in call["cmd"]
+    assert call["cmd"] == ["gh", "secret", "set", "ACC9_ALPACA_KEY", "--repo", "o/r"]
 
 
 def test_set_secret_raises_on_failure():

@@ -157,3 +157,14 @@ def test_l24_save_sender_sets_github_secret():
     v.refresh = lambda: None                          # 擋副作用
     v._save_sender()
     assert captured.get("EMAIL_SENDER") == "alice@gmail.com"   # 有推成 secret
+
+
+# ── 半遮罩：露頭尾+長度供除錯，不洩完整 secret ──────────────────────────
+def test_half_mask_reveals_shape_not_full():
+    from admin_gui.services.action_log import half_mask
+    assert half_mask("re_M3pbFEvZ_KgLq5xSGxmtwaMJj7sr43JUZ") == "re_…JUZ(len=36)"
+    assert half_mask("-") == "…(len=1)"        # 致命 bug 的值：一眼看出 len=1
+    assert half_mask("") == "(空)"
+    # 中段不得出現在輸出（不洩完整值）
+    out = half_mask("kalncyksimsdjqgd")
+    assert "lncyksimsdj" not in out and "len=16" in out

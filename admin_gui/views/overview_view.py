@@ -268,15 +268,31 @@ class OverviewView(QWidget):
         self.drift_banner.setVisible(False)
 
     def _set(self, name):
+        from admin_gui.services.action_log import LOG
         dlg = _SetSecretDialog(name, self)
         if dlg.exec() != QDialog.Accepted or not dlg.v.text():
             return
-        try:
-            self.gh.set_secret(name, dlg.v.text())
-            self.audit.record("set_secret", name)
-            QMessageBox.information(self, "完成", f"{name} 已設定（不存本機）")
-        except GhError as e:
-            QMessageBox.warning(self, "失敗", str(e))
+        raw = dlg.v.text()
+        value = "".join(raw.split())   # 去所有空白（App Password 顯示常含空格）
+        with LOG.action(f"設定 secret {name}", ctx=self.repo_slug) as a:
+            # 只記「形狀」診斷（長度/空白/換行），不記明碼，不記含值的指令。
+            a.step("輸入診斷", "ok",
+                   f"{name} 原始 len={len(raw)} 去空白後 len={len(value)} "
+                   f"有空白={raw != value} 有換行={chr(10) in raw or chr(13) in raw}")
+            a.step("gh 指令", "ok",
+                   f"gh secret set {name} --repo {self.repo_slug}（值經 stdin，不入命令列）")
+            # 半遮罩：露頭尾+長度，日後除錯可比對「值是否存對」（例：len=1 即被存成 -）
+            from admin_gui.services.action_log import half_mask
+            a.step("secret 值(半遮罩)", "ok", f"{name} ⇒ {half_mask(value)}")
+            try:
+                self.gh.set_secret(name, value)
+                a.step("gh set_secret 結果", "ok", "rc=0 已寫入")
+                self.audit.record("set_secret", name)
+                QMessageBox.information(self, "完成",
+                    f"{name} 已設定（{len(value)} 字元，已寫入 GitHub Secret）")
+            except GhError as e:
+                a.step("gh set_secret 結果", "fail", str(e)[:200])
+                QMessageBox.warning(self, "失敗", str(e))
         self.refresh()
 
     def _save_sender(self):

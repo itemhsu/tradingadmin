@@ -63,6 +63,23 @@ def mask_secrets(text: str) -> str:
     return out
 
 
+def half_mask(value: Optional[str], keep: int = 3) -> str:
+    """半遮罩：露頭尾各 keep 碼 + 長度，中間遮掉。供 log 除錯比對用。
+
+    目的：保留足夠線索（前綴/後綴/長度）診斷「值是否被存對」，又不洩完整 secret。
+    例：'re_M3pbFEvZ_KgLq5xSGxmtwaMJj7sr43JUZ' → 're_…JUZ(len=36)'
+        '-'（致命 bug 的值）                    → '…(len=1)'  ← 一眼看出長度異常
+    刻意不用 '=' 連接（避免被 mask_secrets 二次蓋成 ***）。
+    """
+    s = value or ""
+    n = len(s)
+    if n == 0:
+        return "(空)"
+    if n <= keep * 2:
+        return f"…(len={n})"          # 太短：只露長度，不洩短 secret 全文
+    return f"{s[:keep]}…{s[-keep:]}(len={n})"
+
+
 @dataclass
 class Step:
     name: str
@@ -186,7 +203,7 @@ class ActionLog:
         return out
 
     def tail_text(self, n: int = 500) -> str:
-        """純文字版（給 email 用），已遮罩金鑰。"""
+        """純文字版（給 email / 顯示用）。輸出前一律過遮罩，不外洩 secret 明碼。"""
         rows = []
         for r in self.tail(n):
             kind = r.get("kind", "")
