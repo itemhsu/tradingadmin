@@ -110,3 +110,23 @@ def test_unknown_policy_skipped_safely():
     http = _http({"templates/daily.yml": "x"})
     actions = rs.sync("repo_b", "u/r", "v1", gh=gh, http_get=http, manifest=mani)
     assert actions["weird"] == "skip-unknown-policy"            # 不炸
+
+
+def test_fetch_via_gh_not_urllib():
+    """回歸：template/manifest 抓取走 gh api（App 內穩定），不靠 urllib。"""
+    import base64 as _b64
+    seen = []
+    def gh(args, inp=None, **k):
+        j = " ".join(args)
+        seen.append(j)
+        if "tech-rebalance-pub/contents/repo_template.json" in j:
+            return (0, _b64.b64encode(json.dumps(_MANIFEST).encode()).decode(), "")
+        if "tech-rebalance-pub/contents/templates/" in j:
+            return (0, _b64.b64encode(b"pin {version}").decode(), "")
+        if ".sha" in j and "PUT" not in args:
+            return (1, "", "404")
+        return (0, "", "")
+    actions = rs.sync("repo_b", "u/r", "v1.0.6", gh=gh)   # 不傳 http_get → 走 gh
+    assert actions[".github/workflows/test_email.yml"] == "rendered"
+    # 確認真的有經 gh api 抓 pub engine 的 template
+    assert any("tech-rebalance-pub/contents/templates/test_email.yml" in s for s in seen)

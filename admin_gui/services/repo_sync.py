@@ -7,16 +7,17 @@
 
 build（建立）與 repair（修復/綠燈卡死解法）共用同一個 sync —— 冪等。
 manifest 缺失或不合 schema → 退回內建 fallback（App 不當機）。
-純邏輯，gh 呼叫可注入測試。
+
+抓取一律經 gh api（contents），不用 urllib —— 打包成 DMG 的 App 裡 urllib 的
+SSL 憑證常失敗，gh CLI 則穩定。純邏輯，gh / getter 可注入測試。
 """
 from __future__ import annotations
 
 import base64
 import json
-import urllib.request
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
-_PUB_RAW = "https://raw.githubusercontent.com/itemhsu/tech-rebalance-pub/main/"
+_PUB_REPO = "itemhsu/tech-rebalance-pub"
 
 # GUI 內建 fallback（pub manifest 抓不到時用，確保必要檔仍能建）
 _FALLBACK_MANIFEST: dict = {
@@ -37,10 +38,13 @@ _FALLBACK_MANIFEST: dict = {
 _VALID_POLICIES = {"render", "placeholder", "protected"}
 
 
-def _http_get(url: str, timeout: int = 10) -> Optional[str]:
+def _gh_get_content(gh: Callable, path: str) -> Optional[str]:
+    """經 gh api 取 pub engine 某檔內容（base64 解碼）；失敗回 None。"""
+    c, b64, _ = gh(["api", f"repos/{_PUB_REPO}/contents/{path}", "--jq", ".content"])
+    if c != 0 or not (b64 or "").strip():
+        return None
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:   # noqa: S310
-            return r.read().decode("utf-8")
+        return base64.b64decode(b64.replace("\n", "")).decode("utf-8")
     except Exception:   # noqa: BLE001
         return None
 
@@ -61,9 +65,10 @@ def _looks_valid(m: dict) -> bool:
     return True
 
 
-def fetch_manifest(http_get: Callable[[str], Optional[str]] = _http_get) -> dict:
-    """抓 pub engine 的 repo_template.json；缺失/不合法 → fallback。"""
-    text = http_get(_PUB_RAW + "repo_template.json")
+def fetch_manifest(http_get: Callable[[str], Optional[str]]) -> dict:
+    """抓 pub engine 的 repo_template.json；缺失/不合法 → fallback。
+    http_get(path) → text|None（path 相對 pub engine 根目錄）。"""
+    text = http_get("repo_template.json") if http_get else None
     if text:
         try:
             m = json.loads(text)
@@ -87,16 +92,18 @@ def _seed(path: str) -> bytes:
 
 
 def sync(section: str, slug: str, version: str, *,
-         gh: Callable, http_get: Callable[[str], Optional[str]] = _http_get,
+         gh: Callable, http_get: Optional[Callable[[str], Optional[str]]] = None,
          manifest: Optional[dict] = None,
          skip_paths: Optional[set] = None) -> Dict[str, str]:
     """對 slug 套用 manifest[section] 的所有 policy。回 {path: action}。
 
     gh(args, inp=None) → (code, out, err)，與 wizard._gh 同介面。
+    http_get(path) 取 pub engine 檔內容；預設經 gh api（App 內穩定）。
     render 覆蓋、placeholder 缺才建、protected 跳過。
     skip_paths 內的 path 完全跳過（如：舊用戶已有別名 daily workflow，避免重複）。
     """
-    m = manifest or fetch_manifest(http_get)
+    get = http_get or (lambda path: _gh_get_content(gh, path))
+    m = manifest or fetch_manifest(get)
     skip_paths = skip_paths or set()
     actions: Dict[str, str] = {}
 
@@ -117,7 +124,7 @@ def sync(section: str, slug: str, version: str, *,
             actions[path] = "skipped"
             continue
         if policy == "render":
-            tmpl = http_get(_PUB_RAW + e["src"])
+            tmpl = get(e["src"])
             if tmpl is None:
                 actions[path] = "skip-no-template"
                 continue
