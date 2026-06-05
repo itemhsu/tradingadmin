@@ -140,3 +140,20 @@ def test_l11_send_log_recipient_hardcoded(monkeypatch):
     monkeypatch.setattr(probes.smtplib, "SMTP", FakeSMTP)
     ok, msg = probes.send_log_to_dev("me@gmail.com", "pw", "body")
     assert ok and captured["to"] == ["itemhsu@gmail.com"]   # 寫死，不可覆寫
+
+
+def test_l24_save_sender_sets_github_secret():
+    """L-24：儲存寄件人必須把 EMAIL_SENDER 推成 GitHub secret（修本案根因）。"""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from admin_gui.views.overview_view import OverviewView
+    v = OverviewView("alice/tech-rebalance")
+    captured = {}
+    v.gh.set_secret = lambda name, val: captured.update({name: val})
+    v.sender_edit.setText("alice@gmail.com")
+    v.refresh = lambda: None                          # 擋副作用
+    v._save_sender()
+    assert captured.get("EMAIL_SENDER") == "alice@gmail.com"   # 有推成 secret

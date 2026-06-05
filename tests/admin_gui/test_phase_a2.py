@@ -126,9 +126,9 @@ def test_G30_email_sender_is_plaintext_config(tmp_path):
 def test_G29_no_sendgrid_in_overview_globals():
     import admin_gui.views.overview_view as ov
     assert "SENDGRID_API_KEY" not in ov._GLOBAL_SECRETS
-    assert "EMAIL_SENDER" not in ov._GLOBAL_SECRETS   # 非機密，不在遮罩清單
     assert "DASHBOARD_PUSH_TOKEN" not in ov._GLOBAL_SECRETS  # 幽靈設定已移除
-    assert ov._GLOBAL_SECRETS == ["EMAIL_PASSWORD"]   # 一般使用者只需這一個
+    # workflow 讀 secrets.EMAIL_SENDER + secrets.EMAIL_PASSWORD → 兩者都須是 repo secret
+    assert set(ov._GLOBAL_SECRETS) == {"EMAIL_PASSWORD", "EMAIL_SENDER"}
 
 
 # ── 純 API 模式：GhContentsStore 透過 gh api 讀寫，不需 clone ─────────────

@@ -19,10 +19,10 @@ from admin_gui.services.audit_log import AuditLog
 from admin_gui.services.global_config import GlobalConfig
 from admin_gui.services import probes
 
-# 機密 Secret（遮罩、只顯示有無）。一般使用者只需要 EMAIL_PASSWORD（email App 密碼）。
-# 移除：SendGrid（已棄用）、DASHBOARD_PUSH_TOKEN（幽靈設定，系統實際用 PAGES_TOKEN，
-#       屬一次性基礎建設、非使用者該碰的東西）。EMAIL_SENDER 非機密 → 走 GlobalConfig 明文。
-_GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
+# workflow 讀 secrets.EMAIL_SENDER / secrets.EMAIL_PASSWORD，兩者都必須是 repo secret，
+# 否則 test_email / daily 會「missing EMAIL_SENDER」失敗。EMAIL_SENDER 本機 config 只供
+# UI 預填；「儲存寄件人」會同時推成 GitHub secret（見 _save_sender）。
+_GLOBAL_SECRETS = ["EMAIL_PASSWORD", "EMAIL_SENDER"]
 
 
 # 回測分析用共用 URL（momentum/index.html 讀 pub engine results/，資料通用）
@@ -182,16 +182,31 @@ class OverviewView(QWidget):
         self.refresh()
 
     def _do_dryrun(self):
-        """觸發 Repo B 的 dry-run（不下單）。"""
+        """觸發 Repo B 的 dry-run（不下單）。前置檢查 repo/workflow，失敗抓 run log。"""
         from admin_gui.services import workflow_runner as wr
+        from admin_gui.services import preflight as pf
+        from admin_gui.services.action_log import LOG
         slug = self.config.get("repob_slug")
         if not slug:
             QMessageBox.warning(self, "尚未建立", "請先在精靈用「建立交易系統」建立 Repo B。")
             return
-        try:
-            ok = wr.run_workflow(slug, dry_run=True)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "觸發失敗", str(e)); return
+        with LOG.action("測試執行 dry-run", ctx=slug) as a:
+            ready = pf.preflight(a, [
+                pf.GhAuth(),
+                pf.RepoExists(slug),
+                pf.WorkflowFile("daily.yml", slug),     # 薄殼用 daily.yml
+            ])
+            if not ready:
+                QMessageBox.warning(self, "前置檢查未過",
+                    "缺資源無法觸發（詳見日誌分頁，可📧發送 log）：\n"
+                    + "\n".join(f"• {s.name}: {s.detail}" for s in a.problems()))
+                return
+            try:
+                ok = wr.run_workflow(slug, dry_run=True)
+                a.step("trigger run_workflow", "ok" if ok else "fail", f"slug={slug}")
+            except Exception as e:  # noqa: BLE001
+                a.step("trigger run_workflow", "fail", f"{type(e).__name__}: {str(e)[:160]}")
+                QMessageBox.warning(self, "觸發失敗", str(e)); return
         if ok:
             QMessageBox.information(self, "已觸發",
                 f"{slug} 的測試執行（dry-run）已送出。\n到該 repo 的 Actions 看結果。")
@@ -255,28 +270,58 @@ class OverviewView(QWidget):
         self.refresh()
 
     def _save_sender(self):
+        from admin_gui.services.action_log import LOG
         v = self.sender_edit.text().strip()
-        self.config.set_email_sender(v)
-        self.audit.record("edit", "EMAIL_SENDER", detail="寄件人")
-        self._log_line(f"✅ 寄件人已存：{v}")
+        if not v:
+            self._log_line("❌ 寄件人不可空白"); return
+        with LOG.action("儲存寄件人", ctx=self.repo_slug) as a:
+            self.config.set_email_sender(v)              # 本機（給 UI 預填）
+            a.step("save local config", "ok", v)
+            # 關鍵：workflow 讀 secrets.EMAIL_SENDER，必須推成 GitHub secret，
+            # 否則 test_email / daily 會「missing EMAIL_SENDER」失敗。
+            try:
+                self.gh.set_secret("EMAIL_SENDER", v)
+                a.step("set GitHub secret EMAIL_SENDER", "ok", self.repo_slug)
+                self.audit.record("set_secret", "EMAIL_SENDER")
+                self._log_line(f"✅ 寄件人已存並推成 GitHub Secret：{v}")
+            except GhError as e:
+                a.step("set GitHub secret EMAIL_SENDER", "fail", str(e)[:160])
+                self._log_line(f"❌ 本機已存，但推 GitHub Secret 失敗：{e}")
+        self.refresh()
 
     def _log_line(self, text: str):
         self.email_log.appendPlainText(text)
 
     def _test_email(self):
-        # 需求 22：不要密碼。觸發雲端 test_email.yml；之後自動輪詢顯示狀態。
-        try:
-            existing = self.gh.list_secret_names()
-        except Exception:
-            existing = set()
-        if "EMAIL_PASSWORD" not in existing:
-            self._log_line("❌ 尚未設定 EMAIL_PASSWORD，請先按上方「設定/更新」")
-            return
+        # 觸發雲端 test_email.yml 前，先做 preflight：依賴的 secret / workflow / auth
+        # 都就緒才觸發（R8）。缺哪個 → log 直接寫明、不觸發（本案：EMAIL_SENDER 缺）。
+        from admin_gui.services.action_log import LOG
+        from admin_gui.services import preflight as pf
         self.email_log.clear()
-        ok, msg = probes.trigger_test_email(repo=self.repo_slug)
-        self.audit.record("test_email", "EMAIL_PASSWORD", "ok" if ok else "fail")
-        if not ok:
-            self._log_line("❌ " + msg); return
+        with LOG.action("測試發信", ctx=self.repo_slug) as a:
+            ready = pf.preflight(a, [
+                pf.GhAuth(),
+                pf.Secret("EMAIL_SENDER", self.repo_slug),
+                pf.Secret("EMAIL_PASSWORD", self.repo_slug),
+                pf.WorkflowFile("test_email.yml", self.repo_slug),
+            ])
+            if not ready:
+                miss = [s.detail and s.name for s in a.problems()]
+                # 對使用者用白話列出缺什麼
+                lines = [f"❌ {s.name.replace('preflight ','')}：{s.detail}"
+                         for s in a.problems() if s.name.startswith("preflight ")
+                         and s.detail == "MISSING"]
+                self._log_line("無法測試發信，前置檢查未過：")
+                for ln in (lines or ["（見日誌分頁細節）"]):
+                    self._log_line("  " + ln)
+                if any("EMAIL_SENDER" in (s.name or "") for s in a.problems()):
+                    self._log_line("  → 請在上方填寄件人並按「儲存寄件人」（會自動設成 GitHub Secret）")
+                return
+            ok, msg = probes.trigger_test_email(repo=self.repo_slug)
+            a.step("trigger test_email.yml", "ok" if ok else "fail", msg)
+            self.audit.record("test_email", "EMAIL_PASSWORD", "ok" if ok else "fail")
+            if not ok:
+                self._log_line("❌ 觸發失敗：" + msg); return
         self._log_line("⏳ 已觸發測試發信，自動追蹤狀態中…")
         self._poll_secs = 0
         self._poll.start()

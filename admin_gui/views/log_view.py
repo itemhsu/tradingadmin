@@ -87,8 +87,8 @@ class LogView(QWidget):
         self.run_table.setSizePolicy(sp)
         v.addWidget(self.run_table)
 
-        # ── 操作日誌（audit）文字框 ──────────────────────────────────────
-        v.addWidget(QLabel("操作日誌（本機）"))
+        # ── 動作日誌（action_log，密集步驟）文字框 ────────────────────────
+        v.addWidget(QLabel("動作日誌（本機，含每步驟細節）"))
         self.audit_box = QPlainTextEdit()
         self.audit_box.setReadOnly(True)
         self.audit_box.setStyleSheet("font-family:monospace;font-size:11px;")
@@ -137,12 +137,19 @@ class LogView(QWidget):
             self.run_table.setCellWidget(row, 4, dl_btn)
 
     def _fill_audit(self):
-        lines = []
-        for e in self.audit.read(limit=50):
-            lines.append(
-                f"{e['ts'][5:16]}  {e['action']}  {e['target']}  {e['result']}")
+        """顯示新的 action_log（密集步驟，含 env/gh rc/失敗原因）+ 舊 audit 摘要。"""
+        from admin_gui.services.action_log import LOG
+        parts = []
+        action_text = LOG.tail_text(300)
+        if action_text.strip():
+            parts.append(action_text.strip())
+        # 舊 audit（帳戶 CRUD / set_secret 等）附在後面
+        old = [f"{e['ts'][5:16]}  {e['action']}  {e['target']}  {e['result']}"
+               for e in self.audit.read(limit=30)]
+        if old:
+            parts.append("── 操作摘要（audit）──\n" + "\n".join(old))
         self.audit_box.setPlainText(
-            "\n".join(lines) if lines else "（尚無操作記錄）")
+            "\n\n".join(parts) if parts else "（尚無記錄。執行任何操作後會出現於此）")
 
     # ── 🗑 清除 log ───────────────────────────────────────────────────────
     def _clear_log(self):

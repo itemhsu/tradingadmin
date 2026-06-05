@@ -92,14 +92,19 @@ def test_overview_dryrun_button():
     from admin_gui.views.overview_view import OverviewView
     from admin_gui.services.global_config import GlobalConfig
     import admin_gui.services.workflow_runner as wr
+    import admin_gui.services.preflight as pf_mod
     v = OverviewView("alice/tech-rebalance")
     v.config = GlobalConfig.__new__(GlobalConfig)  # minimal
-    # 直接驗證 handler 呼叫 workflow_runner
     cap = {}
-    mp.setattr(wr, "run_workflow", lambda slug, **k: cap.update(slug=slug, kw=k) or True)
-    mp.setattr(QMessageBox, "information", lambda *a, **k: None)
-    mp.setattr(QMessageBox, "warning", lambda *a, **k: None)
-    mp.setattr(v.config, "get", lambda key, default=None: "alice/tech-rebalance" if key == "repob_slug" else default)
-    v._do_dryrun()
-    assert cap["slug"] == "alice/tech-rebalance" and cap["kw"]["dry_run"] is True
-    mp.undo()
+    try:
+        # preflight 通過（測的是 handler 有呼叫 run_workflow，不測 preflight 本身）
+        mp.setattr(pf_mod, "preflight", lambda *a, **k: True)
+        mp.setattr(wr, "run_workflow", lambda slug, **k: cap.update(slug=slug, kw=k) or True)
+        mp.setattr(QMessageBox, "information", lambda *a, **k: None)
+        mp.setattr(QMessageBox, "warning", lambda *a, **k: None)
+        mp.setattr(v.config, "get",
+                   lambda key, default=None: "alice/tech-rebalance" if key == "repob_slug" else default)
+        v._do_dryrun()
+        assert cap["slug"] == "alice/tech-rebalance" and cap["kw"]["dry_run"] is True
+    finally:
+        mp.undo()          # 不論斷言成敗都還原，避免污染其他測試

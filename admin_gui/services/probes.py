@@ -236,8 +236,21 @@ def last_test_email_failure_reason(repo: str = "itemhsu/tech-rebalance",
     lr = run(["gh", "run", "view", str(rid), "--repo", repo, "--log"],
              capture_output=True, text=True)
     log = (lr.stdout or "") + (lr.stderr or "")
-    # 撈我們在 workflow 印的 FAIL 行（或任何 Error/Traceback）
-    hits = [ln.strip() for ln in log.splitlines()
-            if ("FAIL" in ln or "Error" in ln or "Traceback" in ln
-                or "❌" in ln) and "##[" not in ln]
-    return " | ".join(hits[-3:])[:300] if hits else ""
+    import re
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    out = []
+    for raw in log.splitlines():
+        ln = ansi.sub("", raw)                       # 去 ANSI 色碼
+        # gh log 每行格式：job<TAB>step<TAB>timestamp 內容 —— 砍掉前綴只留內容
+        parts = ln.split("\t")
+        content = parts[-1] if parts else ln
+        content = re.sub(r"^\S*Z\s*", "", content).strip()   # 砍 ISO 時戳
+        # 只要「程式真正輸出」的 FAIL/Error；排除回顯的原始碼（含 print(/sys.exit）
+        if not content or "##[" in content:
+            continue
+        if "print(" in content or "sys.exit" in content or content.startswith("run:"):
+            continue
+        if ("FAIL" in content or "Traceback" in content
+                or re.search(r"\bError\b", content)):
+            out.append(content)
+    return out[-1][:300] if out else ""
