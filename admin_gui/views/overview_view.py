@@ -19,10 +19,10 @@ from admin_gui.services.audit_log import AuditLog
 from admin_gui.services.global_config import GlobalConfig
 from admin_gui.services import probes
 
-# workflow 讀 secrets.EMAIL_SENDER / secrets.EMAIL_PASSWORD，兩者都必須是 repo secret，
-# 否則 test_email / daily 會「missing EMAIL_SENDER」失敗。EMAIL_SENDER 本機 config 只供
-# UI 預填；「儲存寄件人」會同時推成 GitHub secret（見 _save_sender）。
-_GLOBAL_SECRETS = ["EMAIL_PASSWORD", "EMAIL_SENDER"]
+# 機密 Secret（遮罩、有「設定/更新」對話框）。EMAIL_SENDER 雖也必須是 repo secret，
+# 但它有自己的「寄件人」欄 + 「儲存寄件人」按鈕（_save_sender 會推成 secret），
+# 不放進這裡以免出現「重複的輸入窗格」；它的就緒狀態顯示在寄件人欄旁（見 refresh）。
+_GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
 
 
 # 回測分析用共用 URL（momentum/index.html 讀 pub engine results/，資料通用）
@@ -122,8 +122,11 @@ class OverviewView(QWidget):
         self.sender_edit = QLineEdit(self.config.email_sender())
         self.sender_edit.setPlaceholderText("you@gmail.com（會顯示，不是機密）")
         save_snd = QPushButton("儲存寄件人"); save_snd.clicked.connect(self._save_sender)
+        # EMAIL_SENDER secret 就緒狀態（顯示在欄位旁，避免另開重複窗格）
+        self.sender_status = QLabel("")
+        self.sender_status.setStyleSheet("font-size:11px;")
         srow = QWidget(); sl = QHBoxLayout(srow); sl.setContentsMargins(0,0,0,0)
-        sl.addWidget(self.sender_edit); sl.addWidget(save_snd)
+        sl.addWidget(self.sender_edit); sl.addWidget(self.sender_status); sl.addWidget(save_snd)
         fm.addRow("寄件人 EMAIL_SENDER", srow)
         # 機密 Secret（遮罩）
         self.sec_labels = {}
@@ -234,6 +237,13 @@ class OverviewView(QWidget):
             existing = set(); gh_ok = False
         for k, lbl in self.sec_labels.items():
             lbl.setText("✅ 已設" if k in existing else "❌ 未設")
+        # EMAIL_SENDER secret 就緒狀態（顯示在寄件人欄旁，不另開窗格）
+        if "EMAIL_SENDER" in existing:
+            self.sender_status.setText("✅ secret 已設")
+            self.sender_status.setStyleSheet("font-size:11px;color:#16a34a;")
+        else:
+            self.sender_status.setText("❌ 未推 secret → 按「儲存寄件人」")
+            self.sender_status.setStyleSheet("font-size:11px;color:#dc2626;")
         ok2, msg2 = probes.probe_gh()
         self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
 

@@ -68,10 +68,10 @@ def _local_store():
 def test_overview_global_settings_builds(qapp, no_net):
     from admin_gui.views.overview_view import OverviewView
     v = OverviewView(SLUG)
-    # EMAIL_SENDER + EMAIL_PASSWORD 都是 secret（workflow 讀 secrets.*）；無 SendGrid / 幽靈
+    # EMAIL_SENDER 有自己的欄+「儲存寄件人」（不在遮罩列，避免重複窗格）；密碼才在遮罩列
     assert v.sender_edit is not None
     assert "EMAIL_PASSWORD" in v.sec_labels
-    assert "EMAIL_SENDER" in v.sec_labels
+    assert "EMAIL_SENDER" not in v.sec_labels
     assert "SENDGRID_API_KEY" not in v.sec_labels
     assert "DASHBOARD_PUSH_TOKEN" not in v.sec_labels
 

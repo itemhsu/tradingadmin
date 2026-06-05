@@ -46,7 +46,12 @@ def _gh(args, inp=None, timeout=60):
         out = (r.stdout or "").strip()
         err = (r.stderr or "").strip()
         if code != 0:
-            LOG.note("gh", "warn", f"rc={code} `{safe_args}` err={err[:200]}")
+            # 冪等修復的「預期」非零（repo 已存在 / Pages 已啟用 / 404 探測）不算警告
+            benign = ("already exists" in err.lower()
+                      or "already enabled" in err.lower()
+                      or "http 409" in err.lower())
+            LOG.note("gh", "ok" if benign else "warn",
+                     f"rc={code} `{safe_args}` err={err[:200]}")
         return code, out, err
     except Exception as e:  # noqa: BLE001  例外＝記原因，不靜默
         LOG.note("gh", "fail", f"`{safe_args}` exc={type(e).__name__}: {str(e)[:160]}")
@@ -271,10 +276,18 @@ class SetupWizard(QDialog):
             latest = versions[0]
             a.step("latest engine", "ok", latest)
 
+            # 「已存在」對修復而言是正常結果 → 記 ok，不要嚇使用者
+            def _repo_create_status(rc):
+                if rc[0] == 0:
+                    return "ok", "已建立"
+                if "already exists" in (rc[2] or "").lower():
+                    return "ok", "已存在（修復時略過）"
+                return "fail", f"rc={rc[0]} {rc[2][:80]}"
+
             # ── ① Repo B：建 repo + 初始 accounts.json（缺才補）+ sync ──
             rc = _gh(["repo", "create", slug, "--private"])
-            a.step("gh repo create (repo B)", "ok" if rc[0] == 0 else "warn",
-                   f"rc={rc[0]} {rc[2][:80]}（已存在屬正常）")
+            st, dt = _repo_create_status(rc)
+            a.step("gh repo create (repo B)", st, dt)
             if _gh(["api", f"repos/{slug}/contents/accounts.json", "--jq", ".sha"])[0] != 0:
                 init_files = pv.build_template_files(latest)
                 acc = init_files.get("accounts.json")
@@ -297,15 +310,15 @@ class SetupWizard(QDialog):
                           and ("daily" in n or "all_accounts" in n)]
                 if legacy:
                     skip.add(".github/workflows/daily.yml")
-                    a.step("legacy daily workflow", "warn",
+                    a.step("legacy daily workflow", "ok",   # 資訊性，非問題
                            f"偵測到 {legacy}，跳過 daily.yml（避免重複下單）")
             rs.sync("repo_b", slug, latest, gh=_gh, skip_paths=skip, logger=a)
             self.config.set("repob_slug", slug)
 
             # ── ② Dashboard：建 repo + 共用 viewer 複製 + sync placeholders ──
             rc = _gh(["repo", "create", dash, "--public"])
-            a.step("gh repo create (dashboard)", "ok" if rc[0] == 0 else "warn",
-                   f"rc={rc[0]} {rc[2][:80]}（已存在屬正常）")
+            st, dt = _repo_create_status(rc)
+            a.step("gh repo create (dashboard)", st, dt)
             TEMPLATE = "itemhsu/tech-rebalance-dashboard"
             for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
                 if _gh(["api", f"repos/{dash}/contents/{fpath}", "--jq", ".sha"])[0] != 0:
@@ -322,7 +335,8 @@ class SetupWizard(QDialog):
             cp, _, ep = _gh(["api", "-X", "POST", f"repos/{dash}/pages", "--input", "-"],
                             inp=pages_payload)
             dash_ok = cp == 0 or "already" in ep.lower() or "409" in ep
-            a.step("enable Pages", "ok" if dash_ok else "warn", f"rc={cp} {ep[:80]}")
+            a.step("enable Pages", "ok" if dash_ok else "warn",
+                   "已啟用" if dash_ok else f"rc={cp} {ep[:80]}")
 
             problems = a.problems()
 
