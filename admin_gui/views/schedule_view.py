@@ -45,7 +45,9 @@ class ScheduleView(QWidget):
         self.store = store
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("每個 workflow 的 cron 排程（時間為 UTC，下方換算台灣時間）"))
+        layout.addWidget(QLabel(
+            "每日自動執行時間（已自動開啟，無需設定）。時間為美股收盤後，"
+            "下方為台灣時間。"))
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Workflow", "cron", "可讀（含台灣時間）", "編輯"])
@@ -53,24 +55,12 @@ class ScheduleView(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.table)
 
-        # 空狀態：沒有任何排程時顯示說明 + 一鍵啟用
+        # 排程預設就開啟（daily.yml 出廠即啟用）；萬一讀不到才顯示提示
         self.empty_hint = QLabel(
-            "目前沒有啟用任何排程。\n\n"
-            "每日自動交易（daily.yml）出廠時是「關閉」的——先用手動觸發確認沒問題，\n"
-            "確認 OK 後再按下方按鈕啟用每日自動執行（預設美股收盤後 UTC 21:15，"
-            "台灣隔日清晨 05:15，週一至週五）。")
+            "排程載入中…若持續空白，請到「總覽」按『重新執行設定精靈』修復一次。")
         self.empty_hint.setStyleSheet("color:#64748b;padding:16px;")
         self.empty_hint.setWordWrap(True)
         layout.addWidget(self.empty_hint)
-
-        bar = QHBoxLayout()
-        b = QPushButton("↻ 重新整理"); b.clicked.connect(self.refresh); bar.addWidget(b)
-        self.enable_btn = QPushButton("✅ 啟用每日自動執行")
-        self.enable_btn.setToolTip("把 daily.yml 的 schedule 取消註解（預設 UTC 21:15 週一至週五）並寫回 GitHub")
-        self.enable_btn.clicked.connect(self._enable_daily)
-        bar.addWidget(self.enable_btn)
-        bar.addStretch()
-        layout.addLayout(bar)
         self._rows: List[tuple] = []
         self.refresh()
 
@@ -129,11 +119,10 @@ class ScheduleView(QWidget):
             self._wf_text[wf] = text
             for c in ce.read_crons_text(text):
                 self._rows.append((wf, c))
-        # 空狀態切換：有排程→顯示表格藏說明；無排程→藏表格顯示說明+啟用鈕
+        # 有排程→顯示表格藏提示；讀不到→顯示提示
         empty = not self._rows
         self.empty_hint.setVisible(empty)
         self.table.setVisible(not empty)
-        self.enable_btn.setVisible(empty)
         self.table.setRowCount(len(self._rows))
         for r, (wf, c) in enumerate(self._rows):
             self.table.setItem(r, 0, QTableWidgetItem(Path(wf).name))

@@ -174,17 +174,10 @@ class OverviewView(QWidget):
         self.dash_lbl.linkActivated.connect(
             lambda u: self._open_checked_link(u, "回測分析"))
         fe.addRow("回測分析", self.dash_lbl)
-        mode = QLabel("純 API 模式（不需本機 clone）"); mode.setStyleSheet("color:#888;")
-        fe.addRow("存取方式", mode)
         # 重新開設定精靈
         wiz_btn = QPushButton("⚙️ 重新執行設定精靈…")
         wiz_btn.clicked.connect(self._open_wizard)
         fe.addRow("", wiz_btn)
-        # 兩 repo 模式：測試執行（dry-run）按鈕
-        self.dryrun_btn = QPushButton("▶ 測試執行（dry-run，不下單）")
-        self.dryrun_btn.clicked.connect(self._do_dryrun)
-        self.dryrun_btn.setVisible(bool(self.config.get("repob_slug")))
-        fe.addRow("", self.dryrun_btn)
         right.addWidget(gb2)
         right.addStretch()
         self.refresh()
