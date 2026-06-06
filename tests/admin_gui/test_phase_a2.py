@@ -128,8 +128,8 @@ def test_G29_no_sendgrid_in_overview_globals():
     assert "SENDGRID_API_KEY" not in ov._GLOBAL_SECRETS
     assert "DASHBOARD_PUSH_TOKEN" not in ov._GLOBAL_SECRETS  # 幽靈設定已移除
     assert "EMAIL_SENDER" not in ov._GLOBAL_SECRETS   # 有自己的欄+按鈕，不在遮罩列（避免重複窗格）
-    # EMAIL_PASSWORD（寄信）+ PAGES_TOKEN（發佈 dashboard）兩個遮罩 secret
-    assert ov._GLOBAL_SECRETS == ["EMAIL_PASSWORD", "PAGES_TOKEN"]
+    assert "PAGES_TOKEN" not in ov._GLOBAL_SECRETS     # 由精靈自動用 gh token 設定，不讓使用者填
+    assert ov._GLOBAL_SECRETS == ["EMAIL_PASSWORD"]
 
 
 # ── 純 API 模式：GhContentsStore 透過 gh api 讀寫，不需 clone ─────────────

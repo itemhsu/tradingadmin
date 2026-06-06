@@ -295,6 +295,22 @@ class SetupWizard(QDialog):
             rc = _gh(["repo", "create", slug, "--private"])
             st, dt = _repo_create_status(rc)
             a.step("gh repo create (repo B)", st, dt)
+
+            # PAGES_TOKEN：自動用使用者現有的 gh token 設定（使用者擁有 dashboard repo，
+            # 此 token 即可寫入）。完全不需使用者建 PAT。每日才能把持倉資料推上 Dashboard。
+            try:
+                tk = subprocess.run(["gh", "auth", "token"],
+                                    capture_output=True, text=True, timeout=15)
+                token = (tk.stdout or "").strip()
+                if token:
+                    sr = _gh(["secret", "set", "PAGES_TOKEN", "--repo", slug], inp=token)
+                    a.step("set PAGES_TOKEN（用 gh token，自動）",
+                           "ok" if sr[0] == 0 else "fail",
+                           "已設（發佈 Dashboard 用）" if sr[0] == 0 else f"rc={sr[0]}")
+                else:
+                    a.step("set PAGES_TOKEN", "warn", "拿不到 gh token，Dashboard 發佈將略過")
+            except Exception as e:   # noqa: BLE001  設不到不擋修復
+                a.step("set PAGES_TOKEN", "warn", f"{type(e).__name__}: {str(e)[:120]}")
             if _gh(["api", f"repos/{slug}/contents/accounts.json", "--jq", ".sha"])[0] != 0:
                 init_files = pv.build_template_files(latest)
                 acc = init_files.get("accounts.json")
