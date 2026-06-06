@@ -215,16 +215,23 @@ class OverviewView(QWidget):
             QMessageBox.warning(self, "觸發失敗", "gh 觸發 workflow 失敗，請確認登入與權限。")
 
     def _open_checked_link(self, url: str, label: str):
-        """前往 Dashboard / 回測：單純打開瀏覽器。
+        """前往 Dashboard / 回測：先打開瀏覽器，再做相依資源檢查並寫入 log。
 
-        Dashboard 是「已發佈的單一快照」——app 點與瀏覽器點看到的完全一樣。
-        init page 的產生不在這裡（在「新增帳號」與「系統啟動檢查」時做），
-        所以這裡不觸發任何雲端動作、不阻塞，就是開瀏覽器。"""
+        Dashboard 是「已發佈的單一快照」——這裡不觸發任何產生動作（init page 在
+        「新增帳號 / 系統啟動」時做）。但會檢查連結依賴的檔案（頁面 / accounts.json /
+        {id}/data.json …）的 HTTP 狀態寫進 log，方便「靠 log 除錯」：一看就知道是
+        404（資料還沒發佈）還是其他問題，使用者不必回傳畫面。"""
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
         from admin_gui.services.action_log import LOG
-        QDesktopServices.openUrl(QUrl(url))
-        LOG.note("前往連結", "ok", f"{label} → {url}")
+        from admin_gui.services import link_diagnostics as ld
+        QDesktopServices.openUrl(QUrl(url))            # 先開，不阻塞
+        with LOG.action(f"前往連結：{label}", ctx=self.repo_slug) as a:
+            a.step("url", "ok", url)
+            try:
+                ld.diagnose_link(url, a)              # 相依資源檢查 → 寫 log
+            except Exception as e:   # noqa: BLE001
+                a.step("相依檢查", "fail", f"{type(e).__name__}: {str(e)[:120]}")
 
     def _open_wizard(self):
         """重新開首次設定精靈：可改 repo 或重新 gh 登入。"""

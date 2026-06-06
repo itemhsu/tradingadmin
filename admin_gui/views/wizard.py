@@ -343,16 +343,24 @@ class SetupWizard(QDialog):
             st, dt = _repo_create_status(rc)
             a.step("gh repo create (dashboard)", st, dt)
             TEMPLATE = "itemhsu/tech-rebalance-dashboard"
+            # viewer 一律「覆蓋更新」（修復時把舊 viewer 升級到最新，例如友善空狀態）；
+            # 其餘共用頁缺才補。
+            _viewer_overwrite = {"mvp_dashboard.html"}
             for fpath in ["mvp_dashboard.html", "momentum/index.html"]:
-                if _gh(["api", f"repos/{dash}/contents/{fpath}", "--jq", ".sha"])[0] != 0:
-                    cr, c64, ce = _gh(["api", f"repos/{TEMPLATE}/contents/{fpath}", "--jq", ".content"])
-                    if cr == 0 and c64.strip():
-                        _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{fpath}", "--input", "-"],
-                            inp=_json.dumps({"message": f"seed {fpath}",
-                                             "content": c64.replace("\n", "")}))
-                        a.step(f"seed {fpath}", "ok", "from template")
-                    else:
-                        a.step(f"seed {fpath}", "fail", f"rc={cr} err={ce[:120]}")
+                cur_sha = _gh(["api", f"repos/{dash}/contents/{fpath}", "--jq", ".sha"])
+                exists = cur_sha[0] == 0
+                if exists and fpath not in _viewer_overwrite:
+                    continue                              # 既有且非 viewer → 不動
+                cr, c64, ce = _gh(["api", f"repos/{TEMPLATE}/contents/{fpath}", "--jq", ".content"])
+                if cr == 0 and c64.strip():
+                    payload = {"message": f"seed {fpath}", "content": c64.replace("\n", "")}
+                    if exists:
+                        payload["sha"] = cur_sha[1].strip()   # 覆蓋需帶 sha
+                    _gh(["api", "-X", "PUT", f"repos/{dash}/contents/{fpath}", "--input", "-"],
+                        inp=_json.dumps(payload))
+                    a.step(f"seed {fpath}", "ok", "更新" if exists else "from template")
+                else:
+                    a.step(f"seed {fpath}", "fail", f"rc={cr} err={ce[:120]}")
             rs.sync("dashboard", dash, latest, gh=_gh, logger=a)
             pages_payload = _json.dumps({"source": {"branch": "main", "path": "/"}})
             cp, _, ep = _gh(["api", "-X", "POST", f"repos/{dash}/pages", "--input", "-"],
