@@ -209,6 +209,20 @@ def trigger_test_email(repo: str = "itemhsu/tech-rebalance", runner=None) -> Tup
     return True, "已觸發測試發信，約 20–40 秒後按『查看結果』"
 
 
+def trigger_publish_dashboard(repo: str, runner=None) -> Tuple[bool, str]:
+    """觸發 publish_dashboard.yml（不交易：新帳戶建 init page → 生成 → 發佈 dashboard）。"""
+    import subprocess
+    run = runner or subprocess.run
+    r = run(["gh", "workflow", "run", "publish_dashboard.yml", "--repo", repo],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout)[:200]
+        if "does not have" in err.lower() or "not found" in err.lower():
+            return False, "尚無 publish_dashboard.yml —— 請先「重新執行設定精靈→修復」。"
+        return False, f"觸發失敗：{err}"
+    return True, "已觸發 Dashboard 發佈"
+
+
 def trigger_refresh_nav(repo: str, runner=None) -> Tuple[bool, str]:
     """觸發 refresh_nav.yml（雲端唯讀查每帳戶即時 NAV，寫 data/nav_snapshot.json）。"""
     import subprocess

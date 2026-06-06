@@ -300,11 +300,39 @@ class AccountsView(QWidget):
             return f"⏳ 查詢中… {self._nav_secs}s"
         return "—"   # 不顯示「待產生」/舊資料；等查詢
 
-    def showEvent(self, e):   # noqa: N802  分頁首次顯示時自動查一次即時 NAV
+    def showEvent(self, e):   # noqa: N802  分頁首次顯示時：查即時 NAV + 檢查 init page
         super().showEvent(e)
         if not self._nav_started:
             self._nav_started = True
             self._start_nav_refresh()
+            self._ensure_init_pages(force=False)   # 系統啟動檢查：缺 init page 就發佈
+
+    def _ensure_init_pages(self, force: bool = False):
+        """確保每個帳戶在 dashboard 有 init page。
+        force=True（新增帳號）→ 直接觸發發佈；
+        force=False（啟動檢查）→ 任一帳戶的 data.json 缺，才觸發（避免每次都打 workflow）。"""
+        from admin_gui.services import probes
+        from admin_gui.services.action_log import LOG
+        owner = self.gh.repo.split("/")[0]
+        base = f"https://{owner}.github.io/tech-rebalance-dashboard/"
+        try:
+            need = force
+            if not force:
+                from admin_gui.services import link_diagnostics as ld
+                for a in self.repo.load():
+                    if not a.get("enabled", True):
+                        continue
+                    code, _ = ld.http_status(base + f"{a.get('id')}/data.json")
+                    if code != 200:
+                        need = True
+                        break
+            if not need:
+                return
+            with LOG.action("產生 Dashboard init page", ctx=self.gh.repo) as act:
+                ok, msg = probes.trigger_publish_dashboard(self.gh.repo)
+                act.step("觸發 publish_dashboard.yml", "ok" if ok else "fail", msg)
+        except Exception as e:   # noqa: BLE001  檢查失敗不影響使用
+            LOG.note("產生 Dashboard init page", "warn", f"{type(e).__name__}: {str(e)[:120]}")
 
     def _start_nav_refresh(self):
         from PySide6.QtCore import QTimer
@@ -382,7 +410,8 @@ class AccountsView(QWidget):
         dlg = AccountDialog(self.catalog, self.gh, self.repo, None, self)
         if dlg.exec() == QDialog.Accepted:
             self.refresh()
-            self._start_nav_refresh()   # 新增成功 → 立刻查即時 NAV，讓使用者感受連上了
+            self._start_nav_refresh()       # 新增成功 → 立刻查即時 NAV，讓使用者感受連上了
+            self._ensure_init_pages(force=True)   # 新增帳號 → 產生 dashboard init page
 
     def _edit(self):
         acc_id = self._selected_id()

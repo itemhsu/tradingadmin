@@ -222,102 +222,16 @@ class OverviewView(QWidget):
             QMessageBox.warning(self, "觸發失敗", "gh 觸發 workflow 失敗，請確認登入與權限。")
 
     def _open_checked_link(self, url: str, label: str):
-        """點連結：先檢查相依檔。若是持倉 Dashboard 且資料未產生 →
-        不丟使用者去看紅字錯誤，而是主動觸發產生、顯示進度與預計時間、
-        不斷 probe，好了才自動開瀏覽器。"""
+        """前往 Dashboard / 回測：單純打開瀏覽器。
+
+        Dashboard 是「已發佈的單一快照」——app 點與瀏覽器點看到的完全一樣。
+        init page 的產生不在這裡（在「新增帳號」與「系統啟動檢查」時做），
+        所以這裡不觸發任何雲端動作、不阻塞，就是開瀏覽器。"""
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
         from admin_gui.services.action_log import LOG
-        from admin_gui.services import link_diagnostics as ld
-        import urllib.parse
-
-        data_missing = False
-        base = acc = ""
-        with LOG.action(f"開啟連結：{label}", ctx=self.repo_slug) as a:
-            a.step("url", "ok", url)
-            try:
-                ld.diagnose_link(url, a)
-                if "mvp_dashboard" in url:
-                    base = url.split("mvp_dashboard")[0]
-                    q = urllib.parse.urlparse(url).query
-                    acc = (urllib.parse.parse_qs(q).get("a") or ["1"])[0]
-                    code, _ = ld.http_status(base + f"{acc}/data.json")
-                    data_missing = (code != 200)
-            except Exception as e:   # noqa: BLE001
-                a.step("相依檢查", "fail", f"{type(e).__name__}: {str(e)[:120]}")
-
-        if data_missing:
-            self._fix_dashboard_then_open(url, base, acc)
-        else:
-            QDesktopServices.openUrl(QUrl(url))
-
-    def _fix_dashboard_then_open(self, url: str, base: str, acc: str):
-        """持倉資料未產生 → 觸發一次正式執行產生資料，顯示進度+預計時間，
-        不斷 probe data.json，成功後自動開瀏覽器。使用者全程清楚狀態。"""
-        from PySide6.QtGui import QDesktopServices
-        from PySide6.QtCore import QUrl, Qt, QTimer
-        from PySide6.QtWidgets import QProgressDialog
-        from admin_gui.services import workflow_runner as wr
-        from admin_gui.services import link_diagnostics as ld
-        from admin_gui.services.action_log import LOG
-
-        if QMessageBox.question(
-                self, "持倉資料尚未產生",
-                "這個 Dashboard 還沒有持倉資料（系統尚未執行過）。\n\n"
-                "要現在為你執行一次、產生資料嗎？\n"
-                "• 預計約 2–4 分鐘（雲端執行 + 發佈）\n"
-                "• 完成後會自動幫你打開 Dashboard\n"
-                "• 這會依你的策略實際下單（Paper 帳戶為模擬）") != QMessageBox.Yes:
-            return
-
-        slug = self.config.get("repob_slug") or self.repo_slug
-        with LOG.action("產生 Dashboard 資料", ctx=slug) as a:
-            try:
-                ok = wr.run_workflow(slug, dry_run=False)
-                a.step("觸發正式執行 daily.yml", "ok" if ok else "fail", f"slug={slug}")
-            except Exception as e:   # noqa: BLE001
-                a.step("觸發正式執行", "fail", f"{type(e).__name__}: {str(e)[:160]}")
-                ok = False
-        if not ok:
-            QMessageBox.warning(self, "無法觸發",
-                "無法觸發執行（詳見日誌）。可到「總覽」確認 repo/workflow 是否就緒。")
-            return
-
-        dlg = QProgressDialog("正在為你產生持倉資料…", "在背景等待", 0, 0, self)
-        dlg.setWindowTitle("產生 Dashboard 資料")
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumWidth(420)
-        dlg.setAutoClose(False); dlg.setAutoReset(False)
-        self._fix_secs = 0
-
-        timer = QTimer(self); timer.setInterval(4000)
-
-        def tick():
-            self._fix_secs += 4
-            code, _ = ld.http_status(base + f"{acc}/data.json")
-            if code == 200:
-                timer.stop()
-                dlg.setLabelText("✅ 完成！正在開啟 Dashboard…")
-                LOG.note("產生 Dashboard 資料", "ok", f"完成（{self._fix_secs}s）")
-                QTimer.singleShot(600, dlg.close)
-                QDesktopServices.openUrl(QUrl(url))
-            elif self._fix_secs >= 360 or dlg.wasCanceled():
-                timer.stop(); dlg.close()
-                if not dlg.wasCanceled():
-                    LOG.note("產生 Dashboard 資料", "warn", "等待逾時（360s）")
-                    QMessageBox.information(self, "仍在處理",
-                        "資料還在產生中（雲端較慢）。稍後再點一次 Dashboard 連結即可，"
-                        "或到「日誌」看執行進度。")
-            else:
-                left = max(0, 180 - self._fix_secs)
-                hint = f"預估再約 {left}s" if left else "即將完成…"
-                dlg.setLabelText(
-                    f"正在為你產生持倉資料…\n\n已等待 {self._fix_secs}s（{hint}）\n"
-                    "雲端執行中，完成後會自動打開 Dashboard。")
-
-        timer.timeout.connect(tick)
-        timer.start()
-        dlg.show()
+        QDesktopServices.openUrl(QUrl(url))
+        LOG.note("前往連結", "ok", f"{label} → {url}")
 
     def _open_wizard(self):
         """重新開首次設定精靈：可改 repo 或重新 gh 登入。"""
