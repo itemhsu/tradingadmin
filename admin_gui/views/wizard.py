@@ -146,10 +146,26 @@ class SetupWizard(QDialog):
 
     # ── ① gh 登入 ─────────────────────────────────────────────────────
     def _refresh_gh(self):
+        """檢查 gh 登入 + 偵測帳號。背景執行，不卡精靈（P0）。"""
+        from admin_gui.services.async_task import run_async
+        self.gh_lbl.setText("GitHub 登入：檢查中…")
+        run_async(self, lambda report: self._compute_gh(), on_done=self._apply_gh)
+
+    @staticmethod
+    def _compute_gh():
+        """背景：gh auth status + gh api user。"""
         ok, msg = probe_gh()
+        login = ""
+        if ok:
+            code, out, _ = _gh(["api", "user", "--jq", ".login"])
+            login = out if code == 0 else ""
+        return (ok, msg, login)
+
+    def _apply_gh(self, res):
+        ok, msg, login = res
         self.gh_lbl.setText(("✅ " if ok else "❌ ") + "GitHub 登入：" + msg)
-        if ok and not self.user_edit.text().strip():
-            self._detect_user()
+        if ok and login and not self.user_edit.text().strip():
+            self.user_edit.setText(login)   # 觸發 textChanged → _refresh_status（已背景）
 
     def _detect_user(self):
         code, out, _ = _gh(["api", "user", "--jq", ".login"])
@@ -177,57 +193,55 @@ class SetupWizard(QDialog):
         row["btn"].setText(("✅ 已完成" if done else row["action"]))
 
     def _refresh_status(self):
-        from admin_gui.services import engine_release as er
+        """檢查 repo / 引擎狀態。耗時的 gh 呼叫全在背景執行，UI 先顯示「檢查中…」，
+        絕不凍結精靈（P0：先畫面、後耗時）。"""
         if not self.user_edit.text().strip():
             self._set_done(self.repob_row, False, "")
             self._set_done(self.engine_row, False, "")
             return
+        if getattr(self, "_status_running", False):
+            return                                   # 避免快速輸入時重複起背景任務
+        self._status_running = True
+        # UI 先給「檢查中…」回饋
+        self.repob_row["status"].setText("檢查中…")
+        self.engine_row["status"].setText("檢查中…")
         repob = self._repob_slug()
         u = self.user_edit.text().strip()
-        dash  = f"{u}/tech-rebalance-dashboard"
-        # 建立交易系統：兩個 repo 都要存在才算完成
-        repob_ok = (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
-        dash_ok  = (_gh(["api", f"repos/{dash}",  "--jq", ".full_name"])[0] == 0)
-        both_ok  = repob_ok and dash_ok
-        if both_ok:
-            note = f"已建立 · {repob.split('/')[-1]} + dashboard"
-        elif repob_ok:
-            note = f"已建立 {repob.split('/')[-1]}，尚缺 dashboard repo"
-        elif dash_ok:
-            note = f"已建立 dashboard，尚缺 {repob.split('/')[-1]}"
-        else:
-            note = ""
-        self._set_done(self.repob_row, both_ok, note)
-        # 綠燈卡死解法：建立列按鈕永不變灰。repo 存在 → 變「🔧 修復」（仍可按、冪等）
-        self.repob_row["btn"].setEnabled(True)
-        self.repob_row["btn"].setText("🔧 修復" if both_ok else self.repob_row["action"])
-        exists = repob_ok   # 引擎檢查只需要 Repo B
-        # 更新引擎：掃 Repo B 的所有 workflow 檔，找到 git+ pin 即可
-        # （workflow 名稱不固定：daily.yml / daily_all_accounts.yml 等都接受）
-        if not exists:
-            self._set_done(self.engine_row, False, "")
-            self.engine_row["status"].setText("（先建立交易系統）")
-            return
+        from admin_gui.services.async_task import run_async
+        run_async(self,
+                  lambda report: self._compute_status(repob, u),
+                  on_done=self._apply_status,
+                  on_failed=self._status_failed)
+
+    @staticmethod
+    def _compute_status(repob: str, u: str) -> dict:
+        """背景執行緒：所有 gh 網路呼叫在此，回傳結果 dict（不碰 UI）。"""
         import base64 as _b64
+        import json as _json
+        from admin_gui.services import engine_release as er
+        dash = f"{u}/tech-rebalance-dashboard"
+        repob_ok = (_gh(["api", f"repos/{repob}", "--jq", ".full_name"])[0] == 0)
+        dash_ok = (_gh(["api", f"repos/{dash}", "--jq", ".full_name"])[0] == 0)
+        res = {"repob": repob, "repob_ok": repob_ok, "dash_ok": dash_ok,
+               "both_ok": repob_ok and dash_ok, "engine_note": "", "engine_ok": False}
+        if not repob_ok:
+            res["engine_note"] = "（先建立交易系統）"
+            return res
         pinned = None
-        # 1. 列出 .github/workflows/
         cw, wf_list, _ = _gh(["api",
             f"repos/{repob}/contents/.github/workflows", "--jq", "[.[].name]"])
         wf_names = []
         if cw == 0 and wf_list:
             try:
-                import json as _json
                 wf_names = _json.loads(wf_list)
             except Exception:  # noqa: BLE001
                 wf_names = []
-        # 2. 逐一讀取，找到含 git+ pin 的那個
         for wfn in wf_names:
             c2, content, _ = _gh(["api",
                 f"repos/{repob}/contents/.github/workflows/{wfn}", "--jq", ".content"])
             if c2 == 0 and content:
                 try:
-                    text = _b64.b64decode(content).decode("utf-8")
-                    p = er.pinned_git_version(text)
+                    p = er.pinned_git_version(_b64.b64decode(content).decode("utf-8"))
                     if p:
                         pinned = p
                         break
@@ -236,18 +250,40 @@ class SetupWizard(QDialog):
         versions = er.list_versions(_ENGINE_REPO)
         latest = versions[0] if versions else None
         up_to_date = bool(pinned and latest and pinned.lstrip("v") == latest.lstrip("v"))
-        # note 永不空白：四種情況都給明確說明
         if up_to_date:
             note = f"已是最新 {pinned}"
         elif pinned and latest:
             note = f"可更新 {pinned}→{latest}"
         elif not pinned:
             note = "未用 git+ 釘版，按「更新」切換為公開引擎"
-        else:  # pinned 有、latest 取不到
+        else:
             note = f"目前 {pinned}（取不到最新版）"
-        self._set_done(self.engine_row, up_to_date, note)
-        # 「更新引擎」這列：未完成也要顯示狀態（_set_done 預設會清空）
-        self.engine_row["status"].setText(note)
+        res["engine_ok"] = up_to_date
+        res["engine_note"] = note
+        return res
+
+    def _apply_status(self, res: dict):
+        """主執行緒：依背景結果更新各列。"""
+        self._status_running = False
+        repob = res["repob"]
+        both_ok = res["both_ok"]
+        if both_ok:
+            note = f"已建立 · {repob.split('/')[-1]} + dashboard"
+        elif res["repob_ok"]:
+            note = f"已建立 {repob.split('/')[-1]}，尚缺 dashboard repo"
+        elif res["dash_ok"]:
+            note = f"已建立 dashboard，尚缺 {repob.split('/')[-1]}"
+        else:
+            note = ""
+        self._set_done(self.repob_row, both_ok, note)
+        self.repob_row["btn"].setEnabled(True)
+        self.repob_row["btn"].setText("🔧 修復" if both_ok else self.repob_row["action"])
+        self._set_done(self.engine_row, res["engine_ok"], res["engine_note"])
+        self.engine_row["status"].setText(res["engine_note"])
+
+    def _status_failed(self, err: str):
+        self._status_running = False
+        self.repob_row["status"].setText(f"檢查失敗：{err[:60]}")
 
     # ── 建立 / 修復 交易系統（manifest 驅動，冪等）───────────────────────
     def _do_build_repob(self):

@@ -57,26 +57,30 @@ def main(argv=None) -> int:
     from admin_gui.services.env_fix import ensure_path
     ensure_path()
 
-    # 啟動即記一筆：App 版本 + 環境快照（除錯時一眼看出對方裝的是哪版）
-    try:
-        from admin_gui import __version__ as _ver
-        from admin_gui.services.action_log import LOG
-        with LOG.action("App 啟動") as _a:
-            _a.step("版本", "ok", f"TradingAdmin v{_ver}")
-    except Exception:   # noqa: BLE001  啟動記 log 失敗不可擋住開 App
-        pass
-
     app = QApplication(argv[:1])
 
+    from PySide6.QtCore import QTimer
     from admin_gui.services.global_config import GlobalConfig
     from admin_gui.views.wizard import SetupWizard
     cfg = GlobalConfig()
 
+    # 啟動 log（含 gh 探測，會連網）→ 排到事件迴圈、視窗顯示後才跑，不擋啟動畫面（P0）。
+    def _startup_log():
+        try:
+            from admin_gui import __version__ as _ver
+            from admin_gui.services.action_log import LOG
+            with LOG.action("App 啟動") as _a:
+                _a.step("版本", "ok", f"TradingAdmin v{_ver}")
+        except Exception:   # noqa: BLE001  啟動記 log 失敗不可擋住開 App
+            pass
+
     if len(argv) > 1:
         slug = argv[1]
     else:
-        # W-1：每次啟動都顯示精靈（保留「略過」）；略過則用既有設定
+        # W-1：每次啟動都顯示精靈（保留「略過」）；略過則用既有設定。
+        # 精靈 UI 立刻出現；gh 檢查在背景（見 wizard._refresh_gh/_refresh_status）。
         wiz = SetupWizard(cfg)
+        QTimer.singleShot(0, _startup_log)   # 視窗顯示後才記啟動 log（不阻塞）
         wiz.exec()
         raw = wiz.chosen_repo or cfg.get("repob_slug") or cfg.get("repo_slug") or _DEFAULT_SLUG
         slug = _sanitize_slug(raw)

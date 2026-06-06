@@ -181,7 +181,7 @@ def test_refresh_engine_row_status_never_blank_when_not_uptodate(qapp, monkeypat
              'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.4"')
     monkeypatch.setattr(wz, "_gh", _gh_for(daily))
 
-    w._refresh_status()
+    w._apply_status(w._compute_status(w._repob_slug(), w.user_edit.text().strip()))
     # 兩個 repo 都存在 → 顯示 "已建立 · tech-rebalance + dashboard"
     assert "已建立" in w.repob_row["status"].text()
     assert "dashboard" in w.repob_row["status"].text()
@@ -198,7 +198,7 @@ def test_refresh_engine_row_note_when_no_git_pin(qapp, monkeypatch, tmp_path):
     legacy = "run: pip install vendor/tech_rebalance-1.0.3-py3-none-any.whl"
     monkeypatch.setattr(wz, "_gh", _gh_for(legacy))
 
-    w._refresh_status()
+    w._apply_status(w._compute_status(w._repob_slug(), w.user_edit.text().strip()))
     note = w.engine_row["status"].text()
     assert note and "git+" in note                              # 明確提示切換
 
@@ -221,7 +221,7 @@ def test_refresh_finds_git_pin_in_daily_all_accounts_yml(qapp, monkeypatch, tmp_
              'git+https://github.com/itemhsu/tech-rebalance-pub@v1.0.6"')
     monkeypatch.setattr(wz, "_gh", _gh_for(daily, wf_name="daily_all_accounts.yml"))
 
-    w._refresh_status()
+    w._apply_status(w._compute_status(w._repob_slug(), w.user_edit.text().strip()))
     note = w.engine_row["status"].text()
     assert "v1.0.6" in note and "已是最新" in note   # 找到 pin，且已是最新
 
@@ -245,6 +245,6 @@ def test_c13_build_button_never_greys_when_repos_exist(qapp, monkeypatch, tmp_pa
             return (0, base64.b64encode(daily.encode()).decode(), "")
         return (0, "", "")
     monkeypatch.setattr(wz, "_gh", fake_gh)
-    w._refresh_status()
+    w._apply_status(w._compute_status(w._repob_slug(), w.user_edit.text().strip()))
     assert w.repob_row["btn"].isEnabled() is True           # 不變灰
     assert w.repob_row["btn"].text() == "🔧 修復"
