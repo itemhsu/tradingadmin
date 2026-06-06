@@ -209,6 +209,53 @@ def trigger_test_email(repo: str = "itemhsu/tech-rebalance", runner=None) -> Tup
     return True, "已觸發測試發信，約 20–40 秒後按『查看結果』"
 
 
+def trigger_refresh_nav(repo: str, runner=None) -> Tuple[bool, str]:
+    """觸發 refresh_nav.yml（雲端唯讀查每帳戶即時 NAV，寫 data/nav_snapshot.json）。"""
+    import subprocess
+    run = runner or subprocess.run
+    r = run(["gh", "workflow", "run", "refresh_nav.yml", "--repo", repo],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout)[:200]
+        if "does not have" in err.lower() or "not found" in err.lower():
+            return False, "尚無 refresh_nav.yml —— 請先「重新執行設定精靈→修復」。"
+        return False, f"觸發失敗：{err}"
+    return True, "已觸發即時 NAV 查詢"
+
+
+def last_refresh_nav_result(repo: str, runner=None) -> Tuple[str, str]:
+    """refresh_nav.yml 最新 run 的 (status, conclusion)。"""
+    import json
+    import subprocess
+    run = runner or subprocess.run
+    r = run(["gh", "run", "list", "--workflow", "refresh_nav.yml", "--repo", repo,
+             "--limit", "1", "--json", "status,conclusion"],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        return "unknown", ""
+    try:
+        d = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        return "unknown", ""
+    return (d[0].get("status", "unknown"), d[0].get("conclusion", "")) if d else ("none", "")
+
+
+def read_nav_snapshot(repo: str, runner=None) -> dict:
+    """從 repo B 讀 data/nav_snapshot.json（gh api contents），回 {id: {nav,cash,ts}|{error}}。"""
+    import base64
+    import json
+    import subprocess
+    run = runner or subprocess.run
+    r = run(["gh", "api", f"repos/{repo}/contents/data/nav_snapshot.json",
+             "--jq", ".content"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return {}
+    try:
+        return json.loads(base64.b64decode(r.stdout or "").decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 _SEND_LOG_MAX = 50000   # workflow_dispatch input 上限 65535，留餘裕
 
 

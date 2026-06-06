@@ -232,10 +232,16 @@ class AccountsView(QWidget):
             from admin_gui.services.repo_store import make_store
             store = make_store(repo_slug=repo_slug)
         self.store = store
+        self.repo_slug = repo_slug
         self.repo = AccountsRepo(store=store)
         self.catalog = Catalog(store=store)
         self.state = StateReader(store=store)
         self.gh = GhClient(repo_slug)
+        # 即時 NAV：雲端查詢的快照 {id: {nav,cash,ts}|{error}} + 進行中狀態
+        self._nav_snap: dict = {}
+        self._nav_pending = False
+        self._nav_secs = 0
+        self._nav_started = False   # 只在分頁首次顯示時自動觸發一次
 
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, len(_HEADERS))
@@ -249,7 +255,7 @@ class AccountsView(QWidget):
 
         bar = QHBoxLayout()
         for text, fn in [("＋ 新增", self._add), ("✎ 編輯", self._edit),
-                         ("🗑 刪除", self._delete), ("↻ 重新整理", self.refresh)]:
+                         ("🗑 刪除", self._delete), ("↻ 更新 NAV", self._start_nav_refresh)]:
             b = QPushButton(text); b.clicked.connect(fn); bar.addWidget(b)
         bar.addStretch()
         layout.addLayout(bar)
@@ -271,7 +277,7 @@ class AccountsView(QWidget):
                      "✅" if a.get("enabled", True) else "⛔", a.get("broker", ""),
                      ("🔴 LIVE" if env == "live" else env),
                      a.get("strategy", ""),
-                     f"${st.nav:,.0f}" if st.nav else "待產生", st.date or "—"]
+                     self._nav_text(a.get("id", ""), st), st.date or "—"]
             for c, text in enumerate(cells):
                 it = QTableWidgetItem(text)
                 if c == 0:
@@ -279,6 +285,80 @@ class AccountsView(QWidget):
                 if c == _ENV_COL and env == "live":
                     it.setForeground(Qt.red)
                 self.table.setItem(r, c, it)
+
+    # ── 即時 NAV（雲端查詢；金鑰不留本機）──────────────────────────────────
+    _NAV_COL = 5
+
+    def _nav_text(self, acc_id: str, st) -> str:
+        """NAV 欄文字：優先雲端即時快照 → 查詢中（含秒數）→ 不顯示舊的 state。"""
+        s = self._nav_snap.get(str(acc_id))
+        if s and "nav" in s:
+            return f"${s['nav']:,.0f}"
+        if s and "error" in s:
+            return f"⚠ {str(s['error'])[:18]}"
+        if self._nav_pending:
+            return f"⏳ 查詢中… {self._nav_secs}s"
+        return "—"   # 不顯示「待產生」/舊資料；等查詢
+
+    def showEvent(self, e):   # noqa: N802  分頁首次顯示時自動查一次即時 NAV
+        super().showEvent(e)
+        if not self._nav_started:
+            self._nav_started = True
+            self._start_nav_refresh()
+
+    def _start_nav_refresh(self):
+        from PySide6.QtCore import QTimer
+        from admin_gui.services import probes
+        from admin_gui.services.action_log import LOG
+        if self._nav_pending:
+            return
+        with LOG.action("查詢即時 NAV", ctx=self.repo_slug) as a:
+            ok, msg = probes.trigger_refresh_nav(self.gh.repo)
+            a.step("觸發 refresh_nav.yml", "ok" if ok else "fail", msg)
+        if not ok:
+            QMessageBox.information(self, "即時 NAV", msg)
+            return
+        self._nav_pending = True
+        self._nav_secs = 0
+        self._nav_snap = {}
+        self.refresh()                                   # 立刻顯示「查詢中… 0s」
+        self._nav_counter = QTimer(self); self._nav_counter.setInterval(1000)
+        self._nav_counter.timeout.connect(self._nav_tick); self._nav_counter.start()
+        self._nav_poller = QTimer(self); self._nav_poller.setInterval(4000)
+        self._nav_poller.timeout.connect(self._nav_poll); self._nav_poller.start()
+
+    def _nav_tick(self):
+        """每秒更新「查詢中… Ns」（只動 NAV 欄文字，不重建整表）。"""
+        self._nav_secs += 1
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, self._NAV_COL)
+            if it and it.text().startswith("⏳"):
+                it.setText(f"⏳ 查詢中… {self._nav_secs}s")
+
+    def _nav_poll(self):
+        from admin_gui.services import probes
+        from admin_gui.services.action_log import LOG
+        status, concl = probes.last_refresh_nav_result(self.gh.repo)
+        if concl == "success":
+            self._nav_stop()
+            self._nav_snap = probes.read_nav_snapshot(self.gh.repo)
+            LOG.note("即時 NAV", "ok", f"完成（{self._nav_secs}s），{len(self._nav_snap)} 帳戶")
+            self.refresh()
+        elif concl in ("failure", "cancelled", "timed_out"):
+            self._nav_stop()
+            LOG.note("即時 NAV", "fail", f"workflow {concl}")
+            self.refresh()
+        elif self._nav_secs >= 150:
+            self._nav_stop()
+            LOG.note("即時 NAV", "warn", "查詢逾時（150s）")
+            self.refresh()
+
+    def _nav_stop(self):
+        self._nav_pending = False
+        for t in ("_nav_counter", "_nav_poller"):
+            tm = getattr(self, t, None)
+            if tm:
+                tm.stop()
 
     def _selected_id(self) -> Optional[str]:
         row = self.table.currentRow()
@@ -302,6 +382,7 @@ class AccountsView(QWidget):
         dlg = AccountDialog(self.catalog, self.gh, self.repo, None, self)
         if dlg.exec() == QDialog.Accepted:
             self.refresh()
+            self._start_nav_refresh()   # 新增成功 → 立刻查即時 NAV，讓使用者感受連上了
 
     def _edit(self):
         acc_id = self._selected_id()
