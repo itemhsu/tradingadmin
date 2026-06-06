@@ -22,7 +22,7 @@ from admin_gui.services import probes
 # 機密 Secret（遮罩、有「設定/更新」對話框）。EMAIL_SENDER 雖也必須是 repo secret，
 # 但它有自己的「寄件人」欄 + 「儲存寄件人」按鈕（_save_sender 會推成 secret），
 # 不放進這裡以免出現「重複的輸入窗格」；它的就緒狀態顯示在寄件人欄旁（見 refresh）。
-_GLOBAL_SECRETS = ["EMAIL_PASSWORD"]
+_GLOBAL_SECRETS = ["EMAIL_PASSWORD", "PAGES_TOKEN"]
 
 
 # 回測分析用共用 URL（momentum/index.html 讀 pub engine results/，資料通用）
@@ -136,6 +136,17 @@ class OverviewView(QWidget):
             btn = QPushButton("設定/更新"); btn.clicked.connect(lambda _=False, n=k: self._set(n))
             rl.addWidget(lbl); rl.addStretch(); rl.addWidget(btn)
             fm.addRow(k, row)
+        # PAGES_TOKEN 指引：建 PAT（可寫 dashboard repo）才能把持倉資料發佈到 Dashboard
+        pt_hint = QLabel(
+            'PAGES_TOKEN＝可寫 <b>{帳號}/tech-rebalance-dashboard</b> 的權杖，'
+            '每日才會把持倉資料推上 Dashboard。<br>'
+            '建立：<a href="https://github.com/settings/personal-access-tokens/new">'
+            'Fine-grained PAT</a> → Repository access 選該 dashboard repo → '
+            'Permissions：Contents = Read and write → 產生後貼上方 PAGES_TOKEN。')
+        pt_hint.setOpenExternalLinks(True)
+        pt_hint.setWordWrap(True)
+        pt_hint.setStyleSheet("color:#94a3b8;font-size:11px;")
+        fm.addRow("", pt_hint)
         # 按鈕用自然寬度（不拉滿）：放 HBox + 右側留白
         test_btn = QPushButton("測試發信")
         test_btn.setFixedWidth(120)
