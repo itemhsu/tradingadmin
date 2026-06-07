@@ -59,7 +59,17 @@ def main(argv=None) -> int:
 
     app = QApplication(argv[:1])
 
-    from PySide6.QtCore import QTimer
+    # 立刻顯示 splash —— 讓使用者第一時間看到畫面（後面的 import/建構才慢）
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtGui import QPixmap, QColor, QPainter, QFont
+    from PySide6.QtWidgets import QSplashScreen
+    _pix = QPixmap(380, 130); _pix.fill(QColor("#0f172a"))
+    _p = QPainter(_pix); _p.setPen(QColor("#e2e8f0"))
+    _p.setFont(QFont("", 16, QFont.Bold)); _p.drawText(_pix.rect(), Qt.AlignCenter,
+        "TradingAdmin\n啟動中…"); _p.end()
+    splash = QSplashScreen(_pix)
+    splash.show(); app.processEvents()       # 立刻畫出 splash
+
     from admin_gui.services.global_config import GlobalConfig
     from admin_gui.views.wizard import SetupWizard
     cfg = GlobalConfig()
@@ -80,12 +90,14 @@ def main(argv=None) -> int:
         # W-1：每次啟動都顯示精靈（保留「略過」）；略過則用既有設定。
         # 精靈 UI 立刻出現；gh 檢查在背景（見 wizard._refresh_gh/_refresh_status）。
         wiz = SetupWizard(cfg)
+        splash.finish(wiz)                   # splash 收掉，精靈接手
         QTimer.singleShot(0, _startup_log)   # 視窗顯示後才記啟動 log（不阻塞）
         wiz.exec()
         raw = wiz.chosen_repo or cfg.get("repob_slug") or cfg.get("repo_slug") or _DEFAULT_SLUG
         slug = _sanitize_slug(raw)
 
     win = MainWindow(slug)
+    splash.finish(win)        # 指定 slug 的路徑（未開精靈）也要收掉 splash
     win.show()
     return app.exec()
 

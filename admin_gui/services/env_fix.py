@@ -39,16 +39,23 @@ def _login_shell_paths() -> list[str]:
     return []
 
 
-def ensure_path() -> str:
-    """把缺少的常見 bin 目錄補進 os.environ['PATH']（去重、保序）。回傳新 PATH。"""
+def _merge(dirs) -> None:
     current = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
     seen = set(current)
-    additions = []
-    for d in _login_shell_paths() + _EXTRA_DIRS:
-        if d and d not in seen and os.path.isdir(d):
-            additions.append(d)
-            seen.add(d)
+    additions = [d for d in dirs if d and d not in seen and os.path.isdir(d)]
     if additions:
-        # 補的路徑放前面，確保 gh 等工具找得到
         os.environ["PATH"] = os.pathsep.join(additions + current)
+
+
+def ensure_path() -> str:
+    """把缺少的常見 bin 目錄補進 PATH。
+
+    啟動效能關鍵：先加 _EXTRA_DIRS（Homebrew 等，瞬間、無子程序）。若這樣已找得到
+    gh（絕大多數情況）→ 直接返回，**不跑**會載入整個 shell profile 的登入 shell 探測
+    （`shell -lic …`，常達數秒，正是「啟動空白」的元兇）。只有仍找不到 gh 才做慢探測。
+    """
+    import shutil
+    _merge(_EXTRA_DIRS)
+    if not shutil.which("gh"):
+        _merge(_login_shell_paths())     # 後援：找不到 gh 才付出慢探測成本
     return os.environ["PATH"]
