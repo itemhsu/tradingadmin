@@ -192,14 +192,19 @@ class ScheduleView(QWidget):
         if dlg.exec() != QDialog.Accepted:
             return
         from admin_gui.services.action_log import LOG
-        with LOG.action("修改排程 cron", ctx=getattr(self, "repo_slug", "")) as a:
-            a.step("變更", "ok", f"{Path(wf).name}: {old_expr} → {new_expr}")
-            try:
+        from admin_gui.services.async_task import run_async
+
+        def _work(report):
+            with LOG.action("修改排程 cron", ctx=getattr(self, "repo_slug", "")) as a:
+                a.step("變更", "ok", f"{Path(wf).name}: {old_expr} → {new_expr}")
                 msg = self.store.write_text(
                     wf, new_text, f"chore(schedule): {Path(wf).name} cron → {new_expr}")
                 a.step("寫回 GitHub", "ok", msg)
-                QMessageBox.information(self, "完成", msg)
-            except Exception as e:  # noqa: BLE001
-                a.step("寫回 GitHub", "fail", f"{type(e).__name__}: {str(e)[:160]}")
-                QMessageBox.warning(self, "寫入失敗", str(e))
-        self.refresh()
+            return msg
+
+        def _done(msg):
+            QMessageBox.information(self, "完成", msg); self.refresh()
+
+        def _failed(err):
+            QMessageBox.warning(self, "寫入失敗", err); self.refresh()
+        run_async(self, _work, on_done=_done, on_failed=_failed)

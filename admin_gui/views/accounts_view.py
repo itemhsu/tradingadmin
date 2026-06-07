@@ -469,12 +469,17 @@ class AccountsView(QWidget):
             f"刪除「{acc.get('label')}」？\n• 從 accounts.json 移除\n"
             f"• 保留 {acc.get('data_dir')}/ 歷史") != QMessageBox.Yes:
             return
-        with LOG.action("刪除帳戶", ctx=getattr(self, "repo_slug", "")) as a:
-            a.step("目標", "ok", f"id={acc_id} label={acc.get('label')}")
-            self.repo.delete(acc_id)
-            a.step("從 accounts.json 移除", "ok", f"id={acc_id}（保留 {acc.get('data_dir')}/）")
-            try:
-                publish_accounts_to_dashboard(self.gh.repo, self.repo.load(), a)
-            except Exception as e:  # noqa: BLE001
-                a.step("同步 accounts.json → dashboard", "fail", str(e)[:160])
-        self.refresh()
+        from admin_gui.services.async_task import run_async
+        def _work(report):
+            with LOG.action("刪除帳戶", ctx=getattr(self, "repo_slug", "")) as a:
+                a.step("目標", "ok", f"id={acc_id} label={acc.get('label')}")
+                self.repo.delete(acc_id)
+                a.step("從 accounts.json 移除", "ok",
+                       f"id={acc_id}（保留 {acc.get('data_dir')}/）")
+                try:
+                    publish_accounts_to_dashboard(self.gh.repo, self.repo.load(), a)
+                except Exception as e:  # noqa: BLE001
+                    a.step("同步 accounts.json → dashboard", "fail", str(e)[:160])
+            return True
+        run_async(self, _work, on_done=lambda _: self.refresh(),
+                  on_failed=lambda e: self.refresh())
