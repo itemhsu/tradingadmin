@@ -142,53 +142,84 @@ class AccountDialog(QDialog):
             "⚠ 真錢帳戶：每日 cron 會用真錢下單" if self.env_cmb.currentText() == "live" else "")
 
     def _test_and_save(self):
-        from admin_gui.services.action_log import LOG, half_mask
+        """測試連線並儲存：驗證/真錢確認在主執行緒；連線測試+寫入+同步在背景（不凍結）。"""
         name = self.name_edit.text().strip()
         broker = self.broker_cmb.currentText()
         env = self.env_cmb.currentText()
+        if not name:
+            self.status.setText("❌ 帳戶名稱必填"); return
+        spec = self.catalog.broker_spec(broker)
+        strat = self.strategy_cmb.currentText()
+        values = {k: e.text().strip() for k, e in self.cred_edits.items()}
+        has_input = any(values.values())
+        if not has_input and not self.original:
+            self.status.setText("❌ 新帳戶需輸入 API 金鑰並測試（未儲存）"); return
+        if env == "live":
+            if QMessageBox.question(self, "真錢確認",
+                f"帳戶「{name}」將以【真錢 live】每日自動交易。確定？") != QMessageBox.Yes:
+                return
+
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt, QTimer
+        from admin_gui.services.async_task import run_async
+        from admin_gui.services.action_log import LOG
+        dlg = QProgressDialog("測試連線中…", None, 0, 0, self)   # 無取消鈕
+        dlg.setWindowTitle("測試連線並儲存"); dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumWidth(380); dlg.setMinimumDuration(0); dlg.setAutoClose(False); dlg.show()
+        self._save_step = "測試連線中…"; self._save_secs = 0
+        timer = QTimer(self); timer.setInterval(1000)
+        def _tick():
+            self._save_secs += 1
+            dlg.setLabelText(f"{self._save_step}（{self._save_secs}s）")
+        timer.timeout.connect(_tick); timer.start()
+        def _on_step(rec):
+            if isinstance(rec, dict) and rec.get("kind") == "step":
+                self._save_step = rec.get("name", "")
+        LOG.subscribe(_on_step)
+        def _cleanup():
+            timer.stop(); dlg.close()
+            try:
+                LOG._listeners.remove(_on_step)
+            except (ValueError, AttributeError):
+                pass
+        def _finish(res):
+            _cleanup()
+            ok, msg = res
+            self.status.setText(("✅ " if ok else "❌ ") + msg)
+            if ok:
+                self.accept()
+        def _failed(err):
+            _cleanup(); self.status.setText(f"❌ {err[:160]}")
+        run_async(self,
+                  lambda report: self._test_and_save_core(
+                      name, broker, env, spec, strat, values, has_input),
+                  on_done=_finish, on_failed=_failed)
+
+    def _test_and_save_core(self, name, broker, env, spec, strat, values, has_input):
+        """背景執行緒：連線測試 + 寫 accounts.json + 寫 Secrets + 同步 dashboard。
+        回 (ok, msg)。"""
+        from admin_gui.services.action_log import LOG, half_mask
         with LOG.action("測試連線並儲存", ctx=getattr(self, "repo_slug", "")) as a:
-            a.step("輸入", "ok", f"label={name or '(空)'} broker={broker} env={env}")
-            if not name:
-                a.step("驗證帳戶名稱", "fail", "帳戶名稱必填")
-                self.status.setText("❌ 帳戶名稱必填"); return
-            spec = self.catalog.broker_spec(broker)
-            strat = self.strategy_cmb.currentText()
-            values = {k: e.text().strip() for k, e in self.cred_edits.items()}
-            has_input = any(values.values())
-            # 半遮罩記每把金鑰的形狀（除錯：看得出有沒有貼空/貼錯長度）
+            a.step("輸入", "ok", f"label={name} broker={broker} env={env}")
             a.step("金鑰形狀", "ok", " ".join(
                 f"{k}▸{half_mask(v)}" for k, v in values.items()) or "(無)")
-
-            # 新帳戶必須輸入並通過金鑰測試才能建立（避免存進未驗證的壞帳戶）
-            if not has_input and not self.original:
-                a.step("前置檢查", "fail", "新帳戶需輸入 API 金鑰並測試")
-                self.status.setText("❌ 新帳戶需輸入 API 金鑰並測試（未儲存）"); return
-
-            if env == "live":
-                if QMessageBox.question(self, "真錢確認",
-                    f"帳戶「{name}」將以【真錢 live】每日自動交易。確定？") != QMessageBox.Yes:
-                    a.step("真錢確認", "skip", "使用者取消")
-                    return
-
-            # 有填金鑰 → 測試連線（Tradier 先用 token 自動取 account_id）
             account_id = ""
             if has_input:
-                self.status.setText("⏳ 測試連線中…"); self.repaint()
                 if broker_creds.needs_account_discovery(spec) and values.get("API_KEY"):
                     ok, res = probes.fetch_account_id(spec, env, values["API_KEY"])
                     a.step("自動取得 account_id", "ok" if ok else "fail", res)
                     if not ok:
-                        self.status.setText(f"❌ {res}（未儲存）"); return
+                        return (False, f"{res}（未儲存）")
                     account_id = res
                     values["ACCOUNT_ID"] = res
                 ok, msg = probes.probe_broker(
                     spec, env, values.get("API_KEY", ""), values.get("API_SECRET", ""), account_id)
                 a.step("券商連線測試", "ok" if ok else "fail", msg)
                 if not ok:
-                    self.status.setText(f"❌ {msg}（未儲存）"); return
-                extra = f"（帳號 {account_id}）" if account_id else ""
-                self.status.setText(f"✅ {msg}{extra}")
-
+                    return (False, f"{msg}（未儲存）")
+                conn_msg = msg + (f"（帳號 {account_id}）" if account_id else "")
+            else:
+                conn_msg = "已儲存"
             try:
                 if self.original:
                     acc_id = self.original["id"]
@@ -208,7 +239,6 @@ class AccountDialog(QDialog):
                     acc_id = acc["id"]
                     prefix = acc.get("secret_prefix") or f"ACC{acc_id}"
                     a.step("新增 accounts.json", "ok", f"id={acc_id} prefix={prefix}")
-                # 券商感知寫入 Secrets（A-4）
                 if has_input:
                     written = broker_creds.secret_writes(broker, spec, prefix, values)
                     for sname, sval in written.items():
@@ -216,13 +246,12 @@ class AccountDialog(QDialog):
                     a.step("寫入 GitHub Secrets", "ok", "、".join(written.keys()))
             except (ValueError, GhError) as e:
                 a.step("儲存", "fail", f"{type(e).__name__}: {str(e)[:160]}")
-                self.status.setText(f"❌ {e}（未完成）"); return
-            # 同步 accounts.json 到 dashboard repo（否則 dashboard 顯示「沒有帳戶」）
+                return (False, f"{e}（未完成）")
             try:
                 publish_accounts_to_dashboard(self.gh.repo, self.repo.load(), a)
-            except Exception as e:  # noqa: BLE001  同步失敗不擋帳戶儲存（已存進 repo B）
+            except Exception as e:   # noqa: BLE001  同步失敗不擋帳戶儲存
                 a.step("同步 accounts.json → dashboard", "fail", str(e)[:160])
-        self.accept()
+        return (True, conn_msg)
 
 
 class AccountsView(QWidget):
