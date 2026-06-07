@@ -287,10 +287,11 @@ class SetupWizard(QDialog):
 
     # ── 建立 / 修復 交易系統（manifest 驅動，冪等）───────────────────────
     def _do_build_repob(self):
-        import base64 as _b64, json as _json
-        from admin_gui.services import engine_release as er
-        from admin_gui.services import repo_b_provisioner as pv
-        from admin_gui.services import repo_sync as rs
+        """建立/修復交易系統：先彈進度視窗，重活在背景執行（不凍結精靈）。"""
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt, QTimer
+        from admin_gui.services.async_task import run_async
+        from admin_gui.services.action_log import LOG
 
         u = self.user_edit.text().strip()
         if not u:
@@ -309,13 +310,65 @@ class SetupWizard(QDialog):
         ) != QMessageBox.Yes:
             return
 
+        # 進度視窗：顯示目前步驟 + 秒數（步驟名來自 action_log 的即時 step）
+        dlg = QProgressDialog(f"{verb}交易系統…", "在背景繼續", 0, 0, self)
+        dlg.setWindowTitle(f"{verb}交易系統"); dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumWidth(460); dlg.setAutoClose(False); dlg.setAutoReset(False)
+        dlg.setMinimumDuration(0); dlg.show()      # 立刻顯示，不等預設 4 秒
+        self._build_secs = 0; self._build_step = "準備中…"
+        timer = QTimer(self); timer.setInterval(1000)
+        def _tick():
+            self._build_secs += 1
+            dlg.setLabelText(f"{verb}交易系統…（{self._build_secs}s）\n目前：{self._build_step}")
+        timer.timeout.connect(_tick); timer.start()
+
+        def _on_step(rec):
+            if isinstance(rec, dict) and rec.get("kind") == "step":
+                self._build_step = rec.get("name", "")
+        LOG.subscribe(_on_step)
+
+        def _cleanup():
+            timer.stop(); dlg.close()
+            try:
+                LOG._listeners.remove(_on_step)
+            except (ValueError, AttributeError):
+                pass
+
+        def _finish(problems):
+            _cleanup(); self._build_done(verb, slug, u, problems)
+
+        def _failed(err):
+            _cleanup(); QMessageBox.warning(self, f"{verb}失敗", err[:300])
+
+        run_async(self,
+                  lambda report: self._do_build_repob_core(verb, slug, dash, u),
+                  on_done=_finish, on_failed=_failed)
+
+    def _build_done(self, verb, slug, u, problems):
+        """主執行緒：建立完成後的結果對話框 + 重新檢查狀態。"""
+        if not problems:
+            QMessageBox.information(self, f"{verb}完成",
+                f"全部成功 ✅\n\n下一步：\n1. 在「帳戶」分頁新增帳戶並填 Alpaca 金鑰\n"
+                f"2. Dashboard：https://{u}.github.io/tech-rebalance-dashboard/")
+        else:
+            detail = "\n".join(f"• {p.name}: {p.status} {p.detail}"
+                               for p in problems if p.status != "skip")
+            QMessageBox.warning(self, f"{verb}完成但有問題",
+                f"以下步驟未完全成功（詳見「日誌」分頁，可按📧發送 log）：\n\n{detail}")
+        self._refresh_status()
+
+    def _do_build_repob_core(self, verb, slug, dash, u):
+        """背景執行緒：實際建立/修復（所有 gh 在此）。回傳 problems 清單。"""
+        import base64 as _b64, json as _json
+        from admin_gui.services import engine_release as er
+        from admin_gui.services import repo_b_provisioner as pv
+        from admin_gui.services import repo_sync as rs
         from admin_gui.services.action_log import LOG
         with LOG.action(f"{verb}交易系統", ctx=slug) as a:
             versions = er.list_versions(_ENGINE_REPO)
             if not versions:
                 a.step("list_versions", "fail", f"列不到 {_ENGINE_REPO} 的 Release")
-                QMessageBox.warning(self, "找不到引擎版本",
-                                    "無法列出公開引擎 Release，請確認 gh 已登入。"); return
+                raise RuntimeError("找不到引擎版本，請確認 gh 已登入。")
             latest = versions[0]
             a.step("latest engine", "ok", latest)
 
@@ -406,17 +459,8 @@ class SetupWizard(QDialog):
                    "已啟用" if dash_ok else f"rc={cp} {ep[:80]}")
 
             problems = a.problems()
-
-        # 結果對話框依實際步驟 —— 不假成功
-        if not problems:
-            QMessageBox.information(self, f"{verb}完成",
-                f"全部成功 ✅\n\n下一步：\n1. 到 {slug} Settings → Secrets 設 Alpaca 金鑰\n"
-                f"2. Dashboard：https://{u}.github.io/tech-rebalance-dashboard/")
-        else:
-            detail = "\n".join(f"• {p.name}: {p.status} {p.detail}" for p in problems if p.status != "skip")
-            QMessageBox.warning(self, f"{verb}完成但有問題",
-                f"以下步驟未完全成功（詳見「日誌」分頁，可按📧發送 log）：\n\n{detail}")
-        self._refresh_status()
+        # 結果對話框在主執行緒（_build_done）做；這裡只回傳 problems。
+        return problems
 
     # ── 更新引擎版本 ─────────────────────────────────────────────────────
     def _do_update_engine(self):
