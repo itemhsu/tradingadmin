@@ -125,7 +125,16 @@ class LogView(QWidget):
         self._fill_audit()
 
     def _fill_run_table(self):
-        runs = log_reader.cron_runs(repo=self.repo_slug, limit=20)
+        """排程歷史（cron_runs 走 gh，網路）→ 背景載入，先顯示「載入中…」（P3）。"""
+        self.run_table.setRowCount(1)
+        self.run_table.setItem(0, 0, QTableWidgetItem("載入排程歷史中…"))
+        from admin_gui.services.async_task import run_async
+        run_async(self,
+                  lambda report: log_reader.cron_runs(repo=self.repo_slug, limit=20),
+                  on_done=self._fill_run_table_rows,
+                  on_failed=lambda e: self.run_table.setRowCount(0))
+
+    def _fill_run_table_rows(self, runs):
         self.run_table.setRowCount(len(runs))
         for row, r in enumerate(runs):
             ts = (r.get("createdAt") or "")[:16].replace("T", " ")

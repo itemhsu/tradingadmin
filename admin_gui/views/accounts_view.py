@@ -297,10 +297,19 @@ class AccountsView(QWidget):
         self.refresh()
 
     def refresh(self):
-        accounts = self.repo.load()
-        self.table.setRowCount(len(accounts))
-        for r, a in enumerate(accounts):
-            st = self.state.read(a)
+        """先顯示「載入中…」，accounts.json + 每帳戶 state 在背景讀（P3：不卡頓）。"""
+        self.table.setRowCount(1)
+        self.table.setItem(0, 0, QTableWidgetItem("載入帳戶中…"))
+        from admin_gui.services.async_task import run_async
+        run_async(self, lambda report: self._compute_accounts(), on_done=self._apply_accounts)
+
+    def _compute_accounts(self):
+        """背景：讀 accounts.json + 每個帳戶的 state。回 [(account, state), ...]。"""
+        return [(a, self.state.read(a)) for a in self.repo.load()]
+
+    def _apply_accounts(self, rows):
+        self.table.setRowCount(len(rows))
+        for r, (a, st) in enumerate(rows):
             env = a.get("environment", "")
             cells = [a.get("label", ""),
                      "✅" if a.get("enabled", True) else "⛔", a.get("broker", ""),

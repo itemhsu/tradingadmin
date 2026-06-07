@@ -107,8 +107,18 @@ class ScheduleView(QWidget):
             return []
 
     def refresh(self):
+        """先骨架，workflow 讀取在背景（P3：分頁不卡頓）。"""
         self._rows = []
         self._wf_text = {}
+        self.empty_hint.setText("排程載入中…")
+        self.empty_hint.setVisible(True)
+        self.table.setVisible(False)
+        from admin_gui.services.async_task import run_async
+        run_async(self, lambda report: self._compute_schedule(), on_done=self._apply_schedule)
+
+    def _compute_schedule(self) -> list:
+        """背景：讀所有 workflow，解析 cron。回 [(wf, text, cron), ...]。"""
+        out = []
         for wf in self._list_workflows():
             try:
                 text = self.store.read_text_or_none(wf)
@@ -116,11 +126,16 @@ class ScheduleView(QWidget):
                 text = None
             if not text:
                 continue
-            self._wf_text[wf] = text
             for c in ce.read_crons_text(text):
-                self._rows.append((wf, c))
-        # 有排程→顯示表格藏提示；讀不到→顯示提示
+                out.append((wf, text, c))
+        return out
+
+    def _apply_schedule(self, rows: list):
+        self._rows = [(wf, c) for wf, _text, c in rows]
+        self._wf_text = {wf: text for wf, text, _c in rows}
         empty = not self._rows
+        self.empty_hint.setText(
+            "排程載入中…若持續空白，請到「總覽」按『重新執行設定精靈』修復一次。")
         self.empty_hint.setVisible(empty)
         self.table.setVisible(not empty)
         self.table.setRowCount(len(self._rows))

@@ -248,24 +248,44 @@ class OverviewView(QWidget):
             self.refresh()
 
     def refresh(self):
+        """先畫骨架（無網路），gh 狀態在背景查（P3：分頁不卡頓）。"""
+        # Dashboard 連結用 repo_slug 的 owner 立即顯示（不需網路）
+        owner = self.repo_slug.split("/")[0] if "/" in self.repo_slug else ""
+        if owner:
+            self.mvp_lbl.setText(
+                f'<a href="{dashboard_mvp_url(owner)}">📊 前往持倉 Dashboard</a>')
+            self.dash_lbl.setText(
+                f'<a href="{dashboard_backtest_url(owner)}">📈 前往回測分析</a>')
+        for lbl in self.sec_labels.values():
+            lbl.setText("檢查中…")
+        self.gh_lbl.setText("檢查中…")
+        self.user_lbl.setText("檢查中…")
+        self._refresh_drift_banner()
+        from admin_gui.services.async_task import run_async
+        run_async(self, lambda report: self._compute_overview(),
+                  on_done=self._apply_overview)
+
+    def _compute_overview(self) -> dict:
+        """背景：secret 清單 + gh 狀態 + 登入名。"""
         try:
-            existing = self.gh.list_secret_names(); gh_ok = True
-        except Exception:
-            existing = set(); gh_ok = False
+            existing = self.gh.list_secret_names()
+        except Exception:   # noqa: BLE001
+            existing = set()
+        return {"existing": existing, "gh": probes.probe_gh(), "login": probes.gh_login()}
+
+    def _apply_overview(self, r: dict):
+        existing = r["existing"]
         for k, lbl in self.sec_labels.items():
             lbl.setText("✅ 已設" if k in existing else "❌ 未設")
-        # EMAIL_SENDER secret 就緒狀態（顯示在寄件人欄旁，不另開窗格）
         if "EMAIL_SENDER" in existing:
             self.sender_status.setText("✅ secret 已設")
             self.sender_status.setStyleSheet("font-size:11px;color:#16a34a;")
         else:
             self.sender_status.setText("❌ 未推 secret → 按「儲存寄件人」")
             self.sender_status.setStyleSheet("font-size:11px;color:#dc2626;")
-        ok2, msg2 = probes.probe_gh()
+        ok2, msg2 = r["gh"]
         self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
-
-        # O-2/O-3：登入名 + Dashboard 連結（每人各自的 dashboard repo）
-        login = probes.gh_login()
+        login = r["login"]
         self.user_lbl.setText(login or "（未登入）")
         owner = self.repo_slug.split("/")[0] if "/" in self.repo_slug else (login or "")
         if owner:
@@ -276,8 +296,6 @@ class OverviewView(QWidget):
         else:
             self.mvp_lbl.setText("（登入後顯示）")
             self.dash_lbl.setText("（登入後顯示）")
-
-        self._refresh_drift_banner()
 
     def _refresh_drift_banner(self):
         """兩-repo 架構：schemas/ 在 pub engine、引擎以 git+ 釘版，不存在 fork 漂移。
