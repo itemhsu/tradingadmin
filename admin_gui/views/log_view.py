@@ -9,14 +9,16 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
-    QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QSizePolicy,
+    QLabel, QSizePolicy,
 )
 
 from admin_gui.services import log_reader
 
 _ICON = {"success": "✅", "failure": "❌", "cancelled": "⛔",
          "skipped": "⏭", "in_progress": "⏳", "queued": "🔄"}
+
+# 單一真實來源：畫面顯示、下載、發送 log 都用同一個行數，確保三者完全一致
+_TAIL = 1000
 
 
 class LogView(QWidget):
@@ -65,31 +67,26 @@ class LogView(QWidget):
         hint.setStyleSheet("color:#94a3b8;font-size:11px;")
         v.addWidget(hint)
 
-        # ── 排程執行表格（純資訊，無逐筆按鈕；總體查看/下載在上方）──────────
-        v.addWidget(QLabel("排程執行（最近 20 次）"))
-        self.run_table = QTableWidget(0, 3)
-        self.run_table.setHorizontalHeaderLabels(["時間", "Workflow", "結果"])
-        self.run_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for col in (0, 2):
-            self.run_table.horizontalHeader().setSectionResizeMode(
-                col, QHeaderView.ResizeToContents)
-        self.run_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.run_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.run_table.setAlternatingRowColors(True)
-        self.run_table.verticalHeader().setVisible(False)
-        sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        sp.setVerticalStretch(3)
-        self.run_table.setSizePolicy(sp)
-        v.addWidget(self.run_table)
+        # ── 上窗格：排程執行歷史（純 txt，與下載/發送完全相同的內容）──────────
+        v.addWidget(QLabel("排程執行歷史（清除後只列新的；失敗附錯誤摘要）"))
+        self.runs_box = QPlainTextEdit()
+        self.runs_box.setReadOnly(True)
+        self.runs_box.setLineWrapMode(QPlainTextEdit.NoWrap)   # 保留橫向捲動
+        self.runs_box.setStyleSheet("font-family:monospace;font-size:11px;")
+        _sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _sp.setVerticalStretch(1)
+        self.runs_box.setSizePolicy(_sp)
+        v.addWidget(self.runs_box)
 
-        # ── 動作日誌（action_log，密集步驟）文字框 ────────────────────────
+        # ── 下窗格：動作日誌（本機，含每步驟細節）──────────────────────────
         v.addWidget(QLabel("動作日誌（本機，含每步驟細節）"))
         self.audit_box = QPlainTextEdit()
         self.audit_box.setReadOnly(True)
+        self.audit_box.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.audit_box.setStyleSheet("font-family:monospace;font-size:11px;")
-        sp2 = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        sp2.setVerticalStretch(1)
-        self.audit_box.setSizePolicy(sp2)
+        _sp2 = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        _sp2.setVerticalStretch(1)                              # 與上窗格等高
+        self.audit_box.setSizePolicy(_sp2)
         v.addWidget(self.audit_box)
 
         # 即時更新：訂閱 action_log，任何新事件都馬上重畫動作日誌框
@@ -100,70 +97,79 @@ class LogView(QWidget):
         self.refresh()
 
     def _on_log_record(self, record: dict):
-        """action_log 有新紀錄 → 重畫動作日誌框（只重畫文字框，不重打 gh 排程表）。"""
+        """action_log 有新紀錄 → 重畫下窗格（動作日誌）。"""
         try:
             self._fill_audit()
         except Exception:   # noqa: BLE001  更新顯示失敗不可影響主流程
             pass
 
-    def showEvent(self, e):   # noqa: N802  切到本分頁時也刷新一次
+    def showEvent(self, e):   # noqa: N802  切到本分頁時刷新
         super().showEvent(e)
         self._fill_audit()
 
-    # ── 填表 ──────────────────────────────────────────────────────────────
     def refresh(self):
-        self._fill_run_table()
+        self._fill_runs()
         self._fill_audit()
 
-    def _fill_run_table(self):
-        """排程歷史（cron_runs 走 gh，網路）→ 背景載入，先顯示「載入中…」（P3）。"""
-        self.run_table.setRowCount(1)
-        self.run_table.setItem(0, 0, QTableWidgetItem("載入排程歷史中…"))
+    # ── 上窗格：排程執行歷史 ────────────────────────────────────────────────
+    def _fill_runs(self):
+        """背景載入排程歷史（清除截止後的）+ 失敗附錯誤摘要 → 填上窗格。"""
+        self.runs_box.setPlainText("載入排程執行歷史中…")
         from admin_gui.services.async_task import run_async
-        run_async(self,
-                  lambda report: log_reader.cron_runs(repo=self.repo_slug, limit=20),
-                  on_done=self._fill_run_table_rows,
-                  on_failed=lambda e: self.run_table.setRowCount(0))
+        from admin_gui.services.action_log import LOG
+        cutoff = LOG.get_cutoff()
+        repo = self.repo_slug
 
-    def _fill_run_table_rows(self, runs):
-        self._runs = runs or []                 # 存起來供「總體下載 / 發送 log」用
-        self.run_table.setRowCount(len(self._runs))
-        for row, r in enumerate(self._runs):
-            ts = (r.get("createdAt") or "")[:16].replace("T", " ")
-            wf = r.get("workflowName") or ""
-            concl = r.get("conclusion") or r.get("status") or ""
-            icon = _ICON.get(concl, "❓")
-            for col, text in ((0, ts), (1, wf), (2, f"{icon} {concl}")):
-                item = QTableWidgetItem(text)
-                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                if col == 2 and concl == "failure":
-                    item.setForeground(Qt.red)
-                self.run_table.setItem(row, col, item)
+        def _load(report):
+            runs = log_reader.cron_runs(repo=repo, limit=20)
+            # 只保留「清除截止」之後的（清完不再重灌舊資料，省 token）
+            if cutoff:
+                runs = [r for r in runs if (r.get("createdAt") or "") > cutoff]
+            # 失敗的 run 補抓錯誤摘要（讓一份 log 就能除錯）
+            for r in runs:
+                if (r.get("conclusion") in ("failure", "cancelled", "timed_out")
+                        and r.get("databaseId")):
+                    r["_excerpt"] = log_reader.run_failure_excerpt(repo, r["databaseId"])
+            return runs
+
+        run_async(self, _load, on_done=self._apply_runs,
+                  on_failed=lambda e: self.runs_box.setPlainText(f"（讀取失敗：{e[:80]}）"))
+
+    def _apply_runs(self, runs):
+        self._runs = runs or []
+        self.runs_box.setPlainText(self._runs_text())
 
     def _runs_text(self) -> str:
-        """排程執行歷史 → 純文字（供總體下載 / 發送 log 一併附上）。"""
-        runs = getattr(self, "_runs", []) or []
+        """排程執行歷史 → 純文字（畫面上窗格 / 下載 / 發送 完全相同）。"""
+        runs = getattr(self, "_runs", None)
+        if runs is None:
+            return "（尚未載入）"
         if not runs:
-            return "（無排程執行紀錄）"
+            return "（清除後尚無新的排程執行）"
         lines = []
         for r in runs:
             ts = (r.get("createdAt") or "")[:16].replace("T", " ")
             wf = r.get("workflowName") or ""
             concl = r.get("conclusion") or r.get("status") or ""
+            icon = _ICON.get(concl, "")
             rid = r.get("databaseId")
             url = (f"https://github.com/{self.repo_slug}/actions/runs/{rid}"
                    if rid else "")
-            lines.append(f"{ts}  {wf}  {concl}  {url}".rstrip())
+            lines.append(f"{ts}  {wf}  {icon}{concl}  {url}".rstrip())
+            exc = r.get("_excerpt")
+            if exc:                       # 失敗 → 縮排附錯誤摘要
+                for ln in exc.splitlines():
+                    lines.append(f"        {ln}")
         return "\n".join(lines)
 
+    # ── 下窗格：動作日誌 ────────────────────────────────────────────────────
     def _fill_audit(self):
-        """只顯示 action_log（每步驟細節，時間序：新的在最後）。不再附 audit 段落。"""
+        """action_log（時間序、新的在最後）→ 填下窗格、捲到底。"""
         from PySide6.QtGui import QTextCursor
         from admin_gui.services.action_log import LOG
-        action_text = LOG.tail_text(300).strip()   # tail 依檔案順序＝時間序，新事件在最後
+        action_text = LOG.tail_text(_TAIL).strip()
         self.audit_box.setPlainText(
             action_text or "（尚無記錄。執行任何操作後會出現於此）")
-        # 捲到最底，讓最新事件可見
         self.audit_box.moveCursor(QTextCursor.End)
         self.audit_box.ensureCursorVisible()
 
@@ -173,22 +179,24 @@ class LogView(QWidget):
         from admin_gui.services.action_log import LOG
         if QMessageBox.question(
                 self, "清除 log",
-                "清空本機動作日誌（不可逆，只清本機、不碰 GitHub 排程歷史）。\n"
-                "建議重現問題前清一次，這樣寄來的 log 才乾淨。要繼續嗎？"
+                "清除：① 清空本機動作日誌 ② 排程歷史以此刻為界，下次只列新的。\n"
+                "（GitHub 上的執行歷史不會被刪，只是本工具不再重列舊的，省得每次重灌。）\n"
+                "建議重現問題前清一次，這樣下載/發送的 log 才乾淨。要繼續嗎？"
         ) != QMessageBox.Yes:
             return
-        n = LOG.clear()
-        # 不再把「清除」本身寫進日誌——否則清完畫面又立刻冒出一筆，使用者誤以為沒清掉。
-        self.refresh()   # 檔案已清空 → 日誌框顯示「（尚無記錄）」
-        QMessageBox.information(self, "已清除", f"已清空 {n} 行動作日誌。")
+        n = LOG.clear()        # 清 action_log + 記排程截止時間
+        self.refresh()
+        QMessageBox.information(self, "已清除",
+            f"已清空 {n} 行動作日誌；排程歷史以此刻為界，下次只列新的。")
 
-    def _combined_log_text(self, n: int = 1000) -> str:
-        """兩份 log 合一：① 本機動作日誌 ② 排程執行歷史（總體一份，供下載/發送）。"""
+    def _combined_log_text(self, n: int = _TAIL) -> str:
+        """下載/發送的 txt＝畫面所見（必須相同）：上窗格＝排程執行歷史、下窗格＝動作日誌。"""
         from admin_gui.services.action_log import LOG, env_snapshot
-        return ("# TradingAdmin 動作日誌\n" + env_snapshot(self.repo_slug) + "\n"
-                + "=" * 50 + "\n" + LOG.tail_text(n)
-                + "\n\n" + "=" * 50 + "\n# 排程執行歷史（最近 20 次）\n"
-                + self._runs_text())
+        return ("# TradingAdmin log\n" + env_snapshot(self.repo_slug) + "\n"
+                + "=" * 60 + "\n# 排程執行歷史（清除後只列新的；失敗附錯誤摘要）\n"
+                + "=" * 60 + "\n" + self._runs_text()
+                + "\n\n" + "=" * 60 + "\n# 動作日誌（本機，含每步驟細節）\n"
+                + "=" * 60 + "\n" + LOG.tail_text(n))
 
     # ── ⬇ 下載 log（存當下最新內容成 .txt；兩份 log 合一）─────────────────────
     def _download_action_log(self):
@@ -196,7 +204,7 @@ class LogView(QWidget):
         from datetime import datetime
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         from admin_gui.services.action_log import LOG
-        body = self._combined_log_text(1000)
+        body = self._combined_log_text(_TAIL)
         default = str(Path.home() / "Desktop" /
                       f"tradingadmin-log-{datetime.now():%Y%m%d-%H%M%S}.txt")
         path, _ = QFileDialog.getSaveFileName(self, "下載 log 成 .txt", default, "文字檔 (*.txt)")
@@ -221,7 +229,7 @@ class LogView(QWidget):
         from admin_gui.services import probes
 
         with LOG.action("發送 log（雲端 email）", ctx=self.repo_slug) as a:
-            body = self._combined_log_text(500)   # 兩份 log 合一（已遮罩金鑰）
+            body = self._combined_log_text(_TAIL)   # 兩份 log 合一（已遮罩金鑰）
             a.step("組裝 log（含排程歷史）", "ok", f"{len(body)} bytes")
             who = probes.gh_login() or "?"
             ok, msg = probes.trigger_send_log(self.repo_slug, body, who=who)

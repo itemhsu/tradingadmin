@@ -144,8 +144,26 @@ class ActionLog:
             except Exception:   # noqa: BLE001
                 pass
 
+    @property
+    def _cutoff_path(self) -> Path:
+        return self.path.parent / "runs_cutoff.txt"
+
+    def set_cutoff(self) -> None:
+        """記下「清除時間」。排程歷史只顯示/送出此後的新 run（避免清完又重灌舊資料、省 token）。"""
+        try:
+            self._cutoff_path.write_text(_now(), encoding="utf-8")
+        except Exception:   # noqa: BLE001
+            pass
+
+    def get_cutoff(self) -> str:
+        """回清除截止 ISO 時間；沒有回空字串。"""
+        try:
+            return self._cutoff_path.read_text(encoding="utf-8").strip()
+        except Exception:   # noqa: BLE001
+            return ""
+
     def clear(self) -> int:
-        """清空 action_log.jsonl，回清掉的行數。只動本機檔，不碰 GitHub。"""
+        """清空 action_log.jsonl + 記下截止時間（連排程歷史一起『清』）。回清掉的行數。"""
         n = 0
         try:
             if self.path.exists():
@@ -153,6 +171,7 @@ class ActionLog:
                 self.path.write_text("", encoding="utf-8")
         except Exception:   # noqa: BLE001
             pass
+        self.set_cutoff()        # 排程歷史也以此刻為界，下次只顯示新的
         return n
 
     def _rotate_if_needed(self) -> None:

@@ -47,6 +47,29 @@ def cron_runs(repo: str = "itemhsu/tech-rebalance", limit: int = 10,
         return []
 
 
+def run_failure_excerpt(repo: str, run_id, runner=None, max_lines: int = 12) -> str:
+    """抓某次失敗 run 的錯誤摘要（gh run view --log-failed）→ 去前綴/色碼、留尾段。
+    只給失敗的 run 用，讓「一份 log」就含真正錯誤、可除錯。讀不到回空。"""
+    import re
+    run = runner or subprocess.run
+    try:
+        r = run(["gh", "run", "view", str(run_id), "--repo", repo, "--log-failed"],
+                capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        return ""
+    log = (getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or "")
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    out = []
+    for raw in log.splitlines():
+        ln = ansi.sub("", raw)
+        parts = ln.split("\t")               # job<TAB>step<TAB>timestamp 內容
+        content = parts[-1] if parts else ln
+        content = re.sub(r"^\d{4}-\d\d-\d\dT[\d:.Z]+\s*", "", content).rstrip()
+        if content:
+            out.append(content)
+    return "\n".join(out[-max_lines:])
+
+
 def _jsonl_from_text(text: Optional[str], limit: Optional[int],
                      reverse: bool = True) -> List[dict]:
     if not text:
