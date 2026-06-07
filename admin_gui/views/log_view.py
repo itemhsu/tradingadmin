@@ -1,13 +1,10 @@
 """admin_gui/views/log_view.py — 全域日誌分頁（第四 tab）。
 
-合併顯示：排程執行（gh run，含線上連結＋下載）＋ 動作日誌（action_log）。
-動作日誌依時間序，新事件在最後；不再附舊 audit 摘要段落。
-每筆排程執行提供「線上查看」與「下載 log」兩個動作。
+合併顯示：排程執行歷史（純資訊表，無逐筆按鈕）＋ 動作日誌（action_log）。
+總體一份：上方「🔗 線上查看全部」開 Actions 頁；「⬇ 下載 log / 📧 發送 log」
+都把「動作日誌 + 排程執行歷史」兩份合一輸出。動作日誌依時間序、新事件在最後。
 """
 from __future__ import annotations
-
-import subprocess
-import webbrowser
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -68,20 +65,14 @@ class LogView(QWidget):
         hint.setStyleSheet("color:#94a3b8;font-size:11px;")
         v.addWidget(hint)
 
-        # ── 排程執行表格 ─────────────────────────────────────────────────
+        # ── 排程執行表格（純資訊，無逐筆按鈕；總體查看/下載在上方）──────────
         v.addWidget(QLabel("排程執行（最近 20 次）"))
-        self.run_table = QTableWidget(0, 5)
-        self.run_table.setHorizontalHeaderLabels(
-            ["時間", "Workflow", "結果", "線上查看", "下載 log"])
-        self.run_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.Stretch)
+        self.run_table = QTableWidget(0, 3)
+        self.run_table.setHorizontalHeaderLabels(["時間", "Workflow", "結果"])
+        self.run_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         for col in (0, 2):
             self.run_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeToContents)
-        for col in (3, 4):
-            self.run_table.horizontalHeader().setSectionResizeMode(
-                col, QHeaderView.Fixed)
-            self.run_table.setColumnWidth(col, 90)
         self.run_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.run_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.run_table.setAlternatingRowColors(True)
@@ -135,16 +126,13 @@ class LogView(QWidget):
                   on_failed=lambda e: self.run_table.setRowCount(0))
 
     def _fill_run_table_rows(self, runs):
-        self.run_table.setRowCount(len(runs))
-        for row, r in enumerate(runs):
+        self._runs = runs or []                 # 存起來供「總體下載 / 發送 log」用
+        self.run_table.setRowCount(len(self._runs))
+        for row, r in enumerate(self._runs):
             ts = (r.get("createdAt") or "")[:16].replace("T", " ")
             wf = r.get("workflowName") or ""
             concl = r.get("conclusion") or r.get("status") or ""
             icon = _ICON.get(concl, "❓")
-            run_id = r.get("databaseId")
-            url = (f"https://github.com/{self.repo_slug}/actions/runs/{run_id}"
-                   if run_id else "")
-
             for col, text in ((0, ts), (1, wf), (2, f"{icon} {concl}")):
                 item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
@@ -152,18 +140,21 @@ class LogView(QWidget):
                     item.setForeground(Qt.red)
                 self.run_table.setItem(row, col, item)
 
-            # 「線上查看」按鈕
-            view_btn = QPushButton("🔗 查看")
-            view_btn.setEnabled(bool(url))
-            view_btn.clicked.connect(lambda _, u=url: webbrowser.open(u))
-            self.run_table.setCellWidget(row, 3, view_btn)
-
-            # 「下載 log」按鈕
-            dl_btn = QPushButton("⬇ 下載")
-            dl_btn.setEnabled(bool(run_id))
-            dl_btn.clicked.connect(
-                lambda _, rid=run_id: self._download_log(rid))
-            self.run_table.setCellWidget(row, 4, dl_btn)
+    def _runs_text(self) -> str:
+        """排程執行歷史 → 純文字（供總體下載 / 發送 log 一併附上）。"""
+        runs = getattr(self, "_runs", []) or []
+        if not runs:
+            return "（無排程執行紀錄）"
+        lines = []
+        for r in runs:
+            ts = (r.get("createdAt") or "")[:16].replace("T", " ")
+            wf = r.get("workflowName") or ""
+            concl = r.get("conclusion") or r.get("status") or ""
+            rid = r.get("databaseId")
+            url = (f"https://github.com/{self.repo_slug}/actions/runs/{rid}"
+                   if rid else "")
+            lines.append(f"{ts}  {wf}  {concl}  {url}".rstrip())
+        return "\n".join(lines)
 
     def _fill_audit(self):
         """只顯示 action_log（每步驟細節，時間序：新的在最後）。不再附 audit 段落。"""
@@ -191,14 +182,21 @@ class LogView(QWidget):
         self.refresh()   # 檔案已清空 → 日誌框顯示「（尚無記錄）」
         QMessageBox.information(self, "已清除", f"已清空 {n} 行動作日誌。")
 
-    # ── ⬇ 下載 log（存當下最新內容成 .txt）──────────────────────────────────
+    def _combined_log_text(self, n: int = 1000) -> str:
+        """兩份 log 合一：① 本機動作日誌 ② 排程執行歷史（總體一份，供下載/發送）。"""
+        from admin_gui.services.action_log import LOG, env_snapshot
+        return ("# TradingAdmin 動作日誌\n" + env_snapshot(self.repo_slug) + "\n"
+                + "=" * 50 + "\n" + LOG.tail_text(n)
+                + "\n\n" + "=" * 50 + "\n# 排程執行歷史（最近 20 次）\n"
+                + self._runs_text())
+
+    # ── ⬇ 下載 log（存當下最新內容成 .txt；兩份 log 合一）─────────────────────
     def _download_action_log(self):
         from pathlib import Path
         from datetime import datetime
         from PySide6.QtWidgets import QFileDialog, QMessageBox
-        from admin_gui.services.action_log import LOG, env_snapshot
-        body = (f"# TradingAdmin 動作日誌\n{env_snapshot(self.repo_slug)}\n"
-                + "=" * 50 + "\n" + LOG.tail_text(1000))
+        from admin_gui.services.action_log import LOG
+        body = self._combined_log_text(1000)
         default = str(Path.home() / "Desktop" /
                       f"tradingadmin-log-{datetime.now():%Y%m%d-%H%M%S}.txt")
         path, _ = QFileDialog.getSaveFileName(self, "下載 log 成 .txt", default, "文字檔 (*.txt)")
@@ -219,13 +217,12 @@ class LogView(QWidget):
         本機不需密碼）。觸發後輪詢結果，成功/失敗都回報。"""
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import QTimer
-        from admin_gui.services.action_log import LOG, env_snapshot
+        from admin_gui.services.action_log import LOG
         from admin_gui.services import probes
 
         with LOG.action("發送 log（雲端 email）", ctx=self.repo_slug) as a:
-            body = (f"# TradingAdmin 動作日誌\n{env_snapshot(self.repo_slug)}\n"
-                    + "=" * 50 + "\n" + LOG.tail_text(500))   # tail_text 已遮罩金鑰
-            a.step("組裝 log", "ok", f"{len(body)} bytes")
+            body = self._combined_log_text(500)   # 兩份 log 合一（已遮罩金鑰）
+            a.step("組裝 log（含排程歷史）", "ok", f"{len(body)} bytes")
             who = probes.gh_login() or "?"
             ok, msg = probes.trigger_send_log(self.repo_slug, body, who=who)
             a.step("觸發 send_log.yml", "ok" if ok else "fail", msg)
@@ -259,29 +256,3 @@ class LogView(QWidget):
             LOG.note("send_log 結果", "warn", "等待逾時（90s），請到 Actions 看 send_log")
 
     # ── 下載 log ─────────────────────────────────────────────────────────
-    def _download_log(self, run_id: int):
-        """用 gh CLI 把 log 下載到使用者選的目錄；失敗則改為開瀏覽器。"""
-        from pathlib import Path
-        from PySide6.QtWidgets import QMessageBox, QFileDialog
-
-        dest = QFileDialog.getExistingDirectory(
-            self, "選擇下載目錄", str(Path.home() / "Desktop"))
-        if not dest:
-            return
-
-        r = subprocess.run(
-            ["gh", "run", "download", str(run_id),
-             "--repo", self.repo_slug, "--dir", dest],
-            capture_output=True, text=True, timeout=60)
-        if r.returncode == 0:
-            QMessageBox.information(
-                self, "下載完成",
-                f"Log 已下載至：\n{dest}")
-        else:
-            url = (f"https://github.com/{self.repo_slug}"
-                   f"/actions/runs/{run_id}")
-            webbrowser.open(url)
-            QMessageBox.information(
-                self, "在瀏覽器查看",
-                f"下載遇到問題，已在瀏覽器開啟此次執行頁面。\n\n"
-                f"你也可以直接在 GitHub Actions 頁面下載 log artifacts。")
