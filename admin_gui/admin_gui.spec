@@ -57,8 +57,15 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# ── onedir 模式（關鍵效能修正）─────────────────────────────────────────────
+# 原本是 onefile（EXE 直接吃 a.binaries/a.zipfiles/a.datas）：每次啟動 PyInstaller
+# bootloader 都要把整包 ~37MB（含整個 Qt）解壓到暫存 _MEIxxxx 才能跑 Python，
+# 這段發生在我們任何程式碼之前，無法用 splash 遮掉 —— 正是「啟動等 7~8 秒」的元兇。
+# 改 onedir：exclude_binaries=True + COLLECT，檔案在 .app 內只攤平一次，
+# 之後每次啟動不再解壓，秒開。
 exe = EXE(
-    pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],
+    pyz, a.scripts, [],
+    exclude_binaries=True,   # ← onedir：binaries 交給 COLLECT，不塞進單檔
     name="TradingAdmin",
     debug=False,
     strip=False,
@@ -70,10 +77,18 @@ exe = EXE(
     entitlements_file=None,
 )
 
-# macOS 產出 .app bundle
+coll = COLLECT(
+    exe, a.binaries, a.zipfiles, a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="TradingAdmin",
+)
+
+# macOS 產出 .app bundle（包 onedir 的 COLLECT 結果）
 if sys.platform == "darwin":
     app = BUNDLE(
-        exe,
+        coll,
         name="TradingAdmin.app",
         icon=None,
         bundle_identifier="com.itemhsu.tradingadmin",
