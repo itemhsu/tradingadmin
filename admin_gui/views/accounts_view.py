@@ -25,8 +25,26 @@ from admin_gui.services.gh_client import GhClient, GhError
 from admin_gui.services import probes, log_reader, broker_creds
 
 # A-1：移除「id」欄（系統內部碼，使用者無須看見）
-_HEADERS = ["帳戶名稱", "啟用", "券商", "環境", "策略", "最後 NAV", "日期"]
-_ENV_COL = 3   # 「環境」欄索引（用於 live 標紅）
+# 末欄「操作」：放 Dashboard 按鈕；「策略」欄文字本身可點（開回測頁）。
+_HEADERS = ["帳戶名稱", "啟用", "券商", "環境", "策略", "最後 NAV", "日期", "操作"]
+_ENV_COL = 3      # 「環境」欄索引（用於 live 標紅）
+_STRAT_COL = 4    # 「策略」欄索引（可點 → 開回測頁）
+_ACTION_COL = 7   # 「操作」欄索引（Dashboard 按鈕）
+
+
+def momentum_url(owner: str, strategy: str) -> str:
+    """回測頁深連結：只比 S&P500 + NASDAQ + 該帳戶策略（未知 id 回測頁會自動忽略）。"""
+    base = f"https://{owner}.github.io/tech-rebalance-dashboard/"
+    sel = "bench_sp500,bench_nasdaq100"
+    if strategy:
+        sel += f",{strategy}"
+    return f"{base}momentum/?sel={sel}"
+
+
+def dashboard_url(owner: str, account_id: str) -> str:
+    """Dashboard 深連結：預設帶入此帳戶（?a=id）。"""
+    return (f"https://{owner}.github.io/tech-rebalance-dashboard/"
+            f"mvp_dashboard.html?a={account_id}")
 
 
 def publish_accounts_to_dashboard(repo_b_slug: str, accounts: list, logger=None) -> None:
@@ -308,13 +326,16 @@ class AccountsView(QWidget):
         return [(a, self.state.read(a)) for a in self.repo.load()]
 
     def _apply_accounts(self, rows):
+        self.table.setRowCount(0)            # 先清空（連同舊的 cell widget），避免殘留
         self.table.setRowCount(len(rows))
+        owner = self.gh.repo.split("/")[0] if getattr(self, "gh", None) and self.gh.repo else ""
         for r, (a, st) in enumerate(rows):
             env = a.get("environment", "")
+            strat = a.get("strategy", "")
             cells = [a.get("label", ""),
                      "✅" if a.get("enabled", True) else "⛔", a.get("broker", ""),
                      ("🔴 LIVE" if env == "live" else env),
-                     a.get("strategy", ""),
+                     strat,
                      self._nav_text(a.get("id", ""), st), st.date or "—"]
             for c, text in enumerate(cells):
                 it = QTableWidgetItem(text)
@@ -323,6 +344,44 @@ class AccountsView(QWidget):
                 if c == _ENV_COL and env == "live":
                     it.setForeground(Qt.red)
                 self.table.setItem(r, c, it)
+
+            # 策略欄：文字可點 → 開回測頁（只比 S&P500 / NASDAQ / 此策略）
+            if strat and owner:
+                sb = QPushButton(strat)
+                sb.setFlat(True)
+                sb.setCursor(Qt.PointingHandCursor)
+                sb.setStyleSheet(
+                    "QPushButton{color:#3b82f6;text-decoration:underline;border:none;"
+                    "background:transparent;text-align:left;padding:0 6px;}")
+                sb.setToolTip(f"開回測頁：比較 S&P500 / NASDAQ-100 / {strat}")
+                sb.clicked.connect(
+                    lambda _=False, o=owner, s=strat:
+                    self._open_url(momentum_url(o, s), "開啟策略回測"))
+                self.table.setCellWidget(r, _STRAT_COL, sb)
+
+            # 操作欄：Dashboard 按鈕（預設此帳戶）
+            if owner:
+                db = QPushButton("📊 Dashboard")
+                db.setCursor(Qt.PointingHandCursor)
+                db.setToolTip("開啟此帳戶的 Dashboard")
+                db.clicked.connect(
+                    lambda _=False, o=owner, aid=str(a.get("id", "")):
+                    self._open_url(dashboard_url(o, aid), "開啟帳戶 Dashboard"))
+                self.table.setCellWidget(r, _ACTION_COL, db)
+
+    def _open_url(self, url: str, what: str):
+        """開系統瀏覽器；記 log（含最終 URL），失敗則提示手動開啟。"""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        from admin_gui.services.action_log import LOG
+        ok = False
+        with LOG.action(what, ctx=getattr(self.gh, "repo", "")) as a:
+            a.step("URL", "ok", url)
+            ok = QDesktopServices.openUrl(QUrl(url))
+            a.step("openUrl", "ok" if ok else "fail",
+                   "已交給系統瀏覽器" if ok else "openUrl 回傳 False")
+        if not ok:
+            QMessageBox.warning(self, "無法開啟", f"請手動複製開啟：\n{url}")
 
     # ── 即時 NAV（雲端查詢；金鑰不留本機）──────────────────────────────────
     _NAV_COL = 5

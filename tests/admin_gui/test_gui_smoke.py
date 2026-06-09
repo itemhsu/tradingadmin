@@ -102,9 +102,10 @@ def test_accounts_view_builds_and_lists(qapp, no_net):
     from admin_gui.views.accounts_view import AccountsView, _HEADERS
     v = AccountsView(SLUG, store=_local_store())
     assert v.table.rowCount() >= 4
-    # G-64：移除 id 欄 → 7 欄，標頭不含 id
-    assert v.table.columnCount() == 7
+    # G-64：移除 id 欄；後續新增「操作」欄（Dashboard 按鈕）→ 8 欄，標頭不含 id
+    assert v.table.columnCount() == 8
     assert "id" not in _HEADERS
+    assert _HEADERS[-1] == "操作"
 
 
 def test_account_dialog_fields_by_broker(qapp, no_net):
