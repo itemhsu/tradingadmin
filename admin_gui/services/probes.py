@@ -86,6 +86,11 @@ def probe_broker(spec: dict, environment: str, api_key: str,
         return False, "找不到該券商的設定（broker schema）"
     if not (api_key and api_secret) and not api_key:
         return False, "缺 API 金鑰"
+    # SDK 券商（如永豐 Shioaji）走 SDK 登入、無 REST base_url，本機無法做 REST 連線測試。
+    # 直接視為通過：金鑰會寫入 Secrets，實際連線在雲端執行時（已 pip install SDK）驗證。
+    if (spec.get("integration") or {}).get("type") == "sdk":
+        return True, ("SDK 券商（如永豐）：本機略過 REST 連線測試，金鑰將直接儲存；"
+                      "實際下單在雲端執行時驗證。")
     try:
         base = ((spec.get("environments") or {}).get(environment) or {}).get("base_url")
         if not base:
