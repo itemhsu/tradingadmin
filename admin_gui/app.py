@@ -54,25 +54,13 @@ class MainWindow(QMainWindow):
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv
 
-    # ⚠ 順序很重要：先把 splash 畫出來，慢的事（ensure_path / 視圖 import / 精靈）
-    # 全部排在 splash.show() 之後，使用者第一時間就看到「啟動中…」而非空畫面。
+    # onedir 打包後啟動已接近秒開，不再需要 splash（一閃即逝、反而干擾）。
     app = QApplication(argv[:1])
+    from PySide6.QtCore import QTimer
 
-    from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtGui import QPixmap, QColor, QPainter, QFont
-    from PySide6.QtWidgets import QSplashScreen
-    _pix = QPixmap(380, 130); _pix.fill(QColor("#0f172a"))
-    _p = QPainter(_pix); _p.setPen(QColor("#e2e8f0"))
-    _p.setFont(QFont("", 16, QFont.Bold)); _p.drawText(_pix.rect(), Qt.AlignCenter,
-        "TradingAdmin\n啟動中…"); _p.end()
-    splash = QSplashScreen(_pix)
-    splash.show()
-    app.processEvents()       # 立刻把 splash 畫到螢幕（先於所有慢動作）
-
-    # macOS 從 Finder/DMG 啟動不繼承 shell PATH → 補 Homebrew 等路徑（splash 已可見）
+    # macOS 從 Finder/DMG 啟動不繼承 shell PATH → 補 Homebrew 等路徑
     from admin_gui.services.env_fix import ensure_path
     ensure_path()
-    app.processEvents()
 
     from admin_gui.services.global_config import GlobalConfig
     from admin_gui.views.wizard import SetupWizard
@@ -94,14 +82,12 @@ def main(argv=None) -> int:
         # W-1：每次啟動都顯示精靈（保留「略過」）；略過則用既有設定。
         # 精靈 UI 立刻出現；gh 檢查在背景（見 wizard._refresh_gh/_refresh_status）。
         wiz = SetupWizard(cfg)
-        splash.finish(wiz)                   # splash 收掉，精靈接手
         QTimer.singleShot(0, _startup_log)   # 視窗顯示後才記啟動 log（不阻塞）
         wiz.exec()
         raw = wiz.chosen_repo or cfg.get("repob_slug") or cfg.get("repo_slug") or _DEFAULT_SLUG
         slug = _sanitize_slug(raw)
 
     win = MainWindow(slug)
-    splash.finish(win)        # 指定 slug 的路徑（未開精靈）也要收掉 splash
     win.show()
     return app.exec()
 
