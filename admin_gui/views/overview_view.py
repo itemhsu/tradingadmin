@@ -70,7 +70,8 @@ class _SetSecretDialog(QDialog):
             v_layout.addWidget(help_lbl)
 
         f = QFormLayout()
-        self.v = QLineEdit(); self.v.setEchoMode(QLineEdit.Password)
+        # 明碼顯示：方便使用者核對貼上的內容（抓空格/錯字）；不存本機、僅寫 GitHub Secret
+        self.v = QLineEdit(); self.v.setEchoMode(QLineEdit.Normal)
         self.v.setMinimumWidth(280)
         f.addRow(f"{name}：", self.v)
         f.addRow(QLabel("⚠ 經 gh 寫入 GitHub Secrets，不存本機檔。"))
