@@ -121,13 +121,12 @@ class OverviewView(QWidget):
         # 寄件人 EMAIL_SENDER：非機密 → 直接顯示可編輯明文
         self.sender_edit = QLineEdit(self.config.email_sender())
         self.sender_edit.setPlaceholderText("you@gmail.com（會顯示，不是機密）")
-        save_snd = QPushButton("儲存寄件人"); save_snd.clicked.connect(self._save_sender)
-        # EMAIL_SENDER secret 就緒狀態（顯示在欄位旁，避免另開重複窗格）
+        save_snd = QPushButton("儲存"); save_snd.clicked.connect(self._save_sender)
+        # EMAIL_SENDER 就緒狀態（樣式與 EMAIL_PASSWORD 的「已設」一致＝預設字型/顏色）
         self.sender_status = QLabel("")
-        self.sender_status.setStyleSheet("font-size:11px;")
         srow = QWidget(); sl = QHBoxLayout(srow); sl.setContentsMargins(0,0,0,0)
         sl.addWidget(self.sender_edit); sl.addWidget(self.sender_status); sl.addWidget(save_snd)
-        fm.addRow("寄件人 EMAIL_SENDER", srow)
+        fm.addRow("EMAIL_SENDER", srow)
         # 機密 Secret（遮罩）
         self.sec_labels = {}
         for k in _GLOBAL_SECRETS:
@@ -278,11 +277,9 @@ class OverviewView(QWidget):
         for k, lbl in self.sec_labels.items():
             lbl.setText("✅ 已設" if k in existing else "❌ 未設")
         if "EMAIL_SENDER" in existing:
-            self.sender_status.setText("✅ secret 已設")
-            self.sender_status.setStyleSheet("font-size:11px;color:#16a34a;")
+            self.sender_status.setText("✅ 已設")
         else:
-            self.sender_status.setText("❌ 未推 secret → 按「儲存寄件人」")
-            self.sender_status.setStyleSheet("font-size:11px;color:#dc2626;")
+            self.sender_status.setText("❌ 未設")
         ok2, msg2 = r["gh"]
         self.gh_lbl.setText(("✅ " if ok2 else "❌ ") + msg2)
         login = r["login"]
@@ -343,7 +340,7 @@ class OverviewView(QWidget):
         if not v:
             self._log_line("❌ 寄件人不可空白"); return
         self.config.set_email_sender(v)                  # 本機（快，給 UI 預填）
-        self._log_line("⏳ 推送寄件人 secret 中…")
+        self._log_line("⏳ 推送中…")
 
         def _work(report):
             with LOG.action("儲存寄件人", ctx=self.repo_slug) as a:
@@ -354,7 +351,7 @@ class OverviewView(QWidget):
             return v
 
         def _done(_):
-            self._log_line(f"✅ 寄件人已存並推成 GitHub Secret：{v}")
+            self._log_line(f"✅ 已存：{v}")
             self.refresh()
 
         def _failed(err):
@@ -388,7 +385,7 @@ class OverviewView(QWidget):
                 for ln in (lines or ["（見日誌分頁細節）"]):
                     self._log_line("  " + ln)
                 if any("EMAIL_SENDER" in (s.name or "") for s in a.problems()):
-                    self._log_line("  → 請在上方填寄件人並按「儲存寄件人」（會自動設成 GitHub Secret）")
+                    self._log_line("  → 請在上方填 EMAIL_SENDER 並按「儲存」")
                 return
             ok, msg = probes.trigger_test_email(repo=self.repo_slug)
             a.step("trigger test_email.yml", "ok" if ok else "fail", msg)
