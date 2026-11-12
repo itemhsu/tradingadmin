@@ -11,8 +11,10 @@ python3 -m pip install -q --upgrade PySide6 pyinstaller
 echo "▶ PyInstaller 打包…"
 python3 -m PyInstaller admin_gui/admin_gui.spec --noconfirm --clean
 
-# macOS：把 .app 包成可拖曳安裝的 DMG（含 /Applications 捷徑）
+# macOS：Developer ID 簽章（有 MACOS_CERT_P12 才簽；否則 ad-hoc）→ DMG → 公證+staple
 if [ "$(uname -s)" = "Darwin" ] && [ -d dist/TradingAdmin.app ]; then
+  echo "▶ 簽章 .app…"
+  bash packaging/codesign_app.sh dist/TradingAdmin.app
   echo "▶ 產生 DMG…"
   rm -rf dist/dmg_stage dist/TradingAdmin-macOS.dmg
   mkdir -p dist/dmg_stage
@@ -21,6 +23,8 @@ if [ "$(uname -s)" = "Darwin" ] && [ -d dist/TradingAdmin.app ]; then
   hdiutil create -volname "TradingAdmin" -srcfolder dist/dmg_stage \
     -ov -format UDZO dist/TradingAdmin-macOS.dmg >/dev/null
   rm -rf dist/dmg_stage
+  echo "▶ 公證 DMG（有 MACOS_NOTARY_* 才做）…"
+  bash packaging/notarize_dmg.sh dist/TradingAdmin-macOS.dmg
 fi
 
 echo "✅ 完成。產物在 dist/："

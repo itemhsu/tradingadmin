@@ -30,8 +30,20 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest tests/admin_gui -q
 
-      - name: Build .app + .dmg
+      - name: Build .app + sign + .dmg + notarize
+        env:
+          # 未設定 → codesign_app.sh 退回 ad-hoc、notarize_dmg.sh 略過（建置仍成功）
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: bash scripts/build_gui.sh
+
+      - name: Verify signature / Gatekeeper
+        run: |
+          codesign -dv --verbose=2 dist/TradingAdmin.app 2>&1 | grep -E "Authority|TeamIdentifier|Signature" || true
+          spctl -a -t open --context context:primary-signature -v dist/TradingAdmin-macOS.dmg 2>&1 || echo "（未公證：Gatekeeper 不接受，首次需右鍵→開啟）"
 
       - name: Upload DMG as build artifact
         uses: actions/upload-artifact@v4
