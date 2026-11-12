@@ -43,7 +43,10 @@ jobs:
       - name: Verify signature / Gatekeeper
         run: |
           codesign -dv --verbose=2 dist/TradingAdmin.app 2>&1 | grep -E "Authority|TeamIdentifier|Signature" || true
-          spctl -a -t open --context context:primary-signature -v dist/TradingAdmin-macOS.dmg 2>&1 || echo "（未公證：Gatekeeper 不接受，首次需右鍵→開啟）"
+          # 檢查 DMG 裡的 App（DMG 外殼本身不簽，Gatekeeper 看的是 App + staple 的公證票）
+          M=$(hdiutil attach -nobrowse -readonly dist/TradingAdmin-macOS.dmg | awk -F'\t' '/Volumes/{print $NF}')
+          spctl -a -t exec -vv "$M/TradingAdmin.app" 2>&1 || echo "（未公證：Gatekeeper 不接受，首次需右鍵→開啟）"
+          hdiutil detach -quiet "$M"
 
       - name: Upload DMG as build artifact
         uses: actions/upload-artifact@v4
