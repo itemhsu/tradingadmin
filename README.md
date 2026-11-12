@@ -27,7 +27,7 @@
 
 **macOS**
 1. 開啟 `.dmg`，把 `TradingAdmin.app` 拖進 `Applications`
-2. 首次開啟：對 App **右鍵 → 開啟**（未經 Apple 公證，直接雙擊會被 Gatekeeper 擋）
+2. 雙擊開啟即可（v0.4.40 起已用 Developer ID 簽章並經 Apple 公證）
 3. 首次啟動精靈：① `gh auth login` 登入 GitHub ② 指定要管理的 repo（`owner/repo`）
 
 **Windows**
