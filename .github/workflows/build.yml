@@ -81,33 +81,51 @@ jobs:
           PYTHONUTF8: '1'
         run: python -m pytest tests/admin_gui -q
 
-      - name: Build TradingAdmin (onedir) + zip
+      - name: Build TradingAdmin (onedir)
         shell: pwsh
         run: |
           python -m PyInstaller admin_gui/admin_gui.spec --noconfirm --clean
           if (-not (Test-Path dist/TradingAdmin/TradingAdmin.exe)) { throw "TradingAdmin.exe not built" }
-          Compress-Archive -Path dist/TradingAdmin -DestinationPath dist/TradingAdmin-Windows.zip -Force
-          Get-Item dist/TradingAdmin-Windows.zip | Format-List Name,Length
 
-      - name: Smoke test (exe starts, stays up 8s)
+      # 安裝程式做法沿用 TopRacer-console：Inno Setup → Setup.exe（不簽章，同 TopRacer）
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Package Setup.exe
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist/TradingAdmin/TradingAdmin.exe -PassThru
-          Start-Sleep -Seconds 8
-          if ($p.HasExited) { throw "TradingAdmin.exe exited early (code $($p.ExitCode))" }
-          Stop-Process -Id $p.Id -Force
-          Write-Host "exe 啟動正常"
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ($ver -notmatch '^\d+\.\d+\.\d+') { $ver = "0.0.0" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" packaging\tradingadmin.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-Item installer/TradingAdmin-Windows-Setup.exe | Format-List Name,Length
 
-      - name: Upload zip as build artifact
+      - name: Smoke test (silent install → launch → uninstall)
+        shell: pwsh
+        run: |
+          $p = Start-Process installer/TradingAdmin-Windows-Setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\TradingAdmin\TradingAdmin.exe"
+          if (-not (Test-Path $exe)) { throw "not installed at $exe" }
+          $app = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($app.HasExited) { throw "TradingAdmin.exe exited early (code $($app.ExitCode))" }
+          Stop-Process -Id $app.Id -Force
+          Start-Sleep -Seconds 2
+          $un = Join-Path $env:LOCALAPPDATA "Programs\TradingAdmin\unins000.exe"
+          Start-Process $un -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          Write-Host "安裝 / 啟動 / 解除安裝 正常"
+
+      - name: Upload Setup.exe as build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TradingAdmin-Windows
-          path: dist/TradingAdmin-Windows.zip
+          name: TradingAdmin-Windows-Setup
+          path: installer/TradingAdmin-Windows-Setup.exe
           if-no-files-found: error
 
-      - name: Attach zip to Release (on tag push only)
+      - name: Attach Setup.exe to Release (on tag push only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/TradingAdmin-Windows.zip
+          files: installer/TradingAdmin-Windows-Setup.exe
           generate_release_notes: true

@@ -23,7 +23,7 @@
 
 到 **[Releases](../../releases/latest)** 下載：
 - macOS：`TradingAdmin-macOS.dmg`
-- Windows：`TradingAdmin-Windows.zip`
+- Windows：`TradingAdmin-Windows-Setup.exe`
 
 **macOS**
 1. 開啟 `.dmg`，把 `TradingAdmin.app` 拖進 `Applications`
@@ -31,8 +31,8 @@
 3. 首次啟動精靈：① `gh auth login` 登入 GitHub ② 指定要管理的 repo（`owner/repo`）
 
 **Windows**
-1. 解壓 `TradingAdmin-Windows.zip`（整個資料夾都要留著，不能只拿 exe）
-2. 執行 `TradingAdmin\TradingAdmin.exe`；未簽章，SmartScreen 出現時按「其他資訊 → 仍要執行」
+1. 執行 `TradingAdmin-Windows-Setup.exe`（未簽章，SmartScreen 出現時按「其他資訊 → 仍要執行」）
+2. 只裝給目前使用者、不需系統管理員；新版直接覆蓋升級，從開始選單或桌面捷徑開啟
 3. 首次啟動精靈同上（登入 GitHub 時會跳出一個主控台視窗顯示一次性驗證碼）
 
 ### 需求
