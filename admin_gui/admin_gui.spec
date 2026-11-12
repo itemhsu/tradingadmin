@@ -63,8 +63,12 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 # 這段發生在我們任何程式碼之前，無法用 splash 遮掉 —— 正是「啟動等 7~8 秒」的元兇。
 # 改 onedir：exclude_binaries=True + COLLECT，檔案在 .app 內只攤平一次，
 # 之後每次啟動不再解壓，秒開。
+# Python UTF-8 mode：subprocess(text=True)/open() 一律 UTF-8。
+# 中文 Windows 預設 cp950，解 gh 的 UTF-8 輸出會 UnicodeDecodeError。
+_py_options = [("X utf8_mode=1", None, "OPTION")]
+
 exe = EXE(
-    pyz, a.scripts, [],
+    pyz, a.scripts, _py_options,
     exclude_binaries=True,   # ← onedir：binaries 交給 COLLECT，不塞進單檔
     name="TradingAdmin",
     debug=False,

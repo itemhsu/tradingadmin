@@ -176,7 +176,11 @@ class SetupWizard(QDialog):
         from admin_gui.services.action_log import LOG
         with LOG.action("登入 GitHub（gh auth login）") as a:
             try:
-                subprocess.Popen(["gh", "auth", "login", "--web"])
+                import os as _os
+                # Windows：開新主控台讓使用者看到一次性驗證碼（CREATE_NEW_CONSOLE 優先於全域 NO_WINDOW）
+                _kw = ({"creationflags": getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)}
+                       if _os.name == "nt" else {})
+                subprocess.Popen(["gh", "auth", "login", "--web"], **_kw)
                 a.step("開啟 gh auth login --web", "ok", "已啟動瀏覽器授權流程")
                 QMessageBox.information(self, "授權中",
                     "已開啟 gh 登入流程，請依指示完成後回來按「↻ 重新檢查狀態」。")

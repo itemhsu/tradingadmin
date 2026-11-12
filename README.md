@@ -1,6 +1,6 @@
 # TradingAdmin — 交易系統管理控制台（桌面 GUI）
 
-[![Build & Release (macOS)](https://github.com/itemhsu/tradingadmin/actions/workflows/build.yml/badge.svg)](https://github.com/itemhsu/tradingadmin/actions/workflows/build.yml)
+[![Build & Release (macOS + Windows)](https://github.com/itemhsu/tradingadmin/actions/workflows/build.yml/badge.svg)](https://github.com/itemhsu/tradingadmin/actions/workflows/build.yml)
 
 跨平台桌面 App，用來管理你的自動交易系統帳戶 —— 新增/編輯帳戶、設定券商
 金鑰、編輯 cron 排程、查看操作與排程日誌。
@@ -19,16 +19,24 @@
 完整從零到生產的設定教學（含桌面 App 與手動兩種方式）：
 **[線上部署指南](https://itemhsu.github.io/tradingadmin/setup-guide.html)**
 
-## 📥 下載（macOS）
+## 📥 下載（macOS / Windows）
 
-到 **[Releases](../../releases/latest)** 下載 `TradingAdmin-macOS.dmg`。
+到 **[Releases](../../releases/latest)** 下載：
+- macOS：`TradingAdmin-macOS.dmg`
+- Windows：`TradingAdmin-Windows.zip`
 
+**macOS**
 1. 開啟 `.dmg`，把 `TradingAdmin.app` 拖進 `Applications`
 2. 首次開啟：對 App **右鍵 → 開啟**（未經 Apple 公證，直接雙擊會被 Gatekeeper 擋）
 3. 首次啟動精靈：① `gh auth login` 登入 GitHub ② 指定要管理的 repo（`owner/repo`）
 
+**Windows**
+1. 解壓 `TradingAdmin-Windows.zip`（整個資料夾都要留著，不能只拿 exe）
+2. 執行 `TradingAdmin\TradingAdmin.exe`；未簽章，SmartScreen 出現時按「其他資訊 → 仍要執行」
+3. 首次啟動精靈同上（登入 GitHub 時會跳出一個主控台視窗顯示一次性驗證碼）
+
 ### 需求
-- [GitHub CLI](https://cli.github.com/)：`brew install gh`，並 `gh auth login`
+- [GitHub CLI](https://cli.github.com/)：macOS `brew install gh`；Windows `winget install --id GitHub.cli`
   （App 啟動會自動把 Homebrew 等路徑補進 PATH，從 Finder/DMG 開也找得到 `gh`）
 - 對目標 repo 有寫入權限
 
